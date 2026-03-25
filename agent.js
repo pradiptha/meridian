@@ -58,7 +58,7 @@ function getToolsForRole(agentType, goal = "") {
 }
 import { getWalletBalances } from "./tools/wallet.js";
 import { getMyPositions } from "./tools/dlmm.js";
-import { log } from "./logger.js";
+import { log, logLLM } from "./logger.js";
 import { config } from "./config.js";
 import { getStateSummary } from "./state.js";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
@@ -104,7 +104,6 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   let emptyStreak = 0;
   for (let step = 0; step < maxSteps; step++) {
     log("agent", `Step ${step + 1}/${maxSteps}`);
-
     try {
       const activeModel = model || DEFAULT_MODEL;
 
@@ -166,6 +165,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         }
       }
       messages.push(msg);
+      logLLM(messages);
 
       // If the model didn't call any tools, it's done
       if (!msg.tool_calls || msg.tool_calls.length === 0) {

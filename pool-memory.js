@@ -33,6 +33,7 @@ function save(data) {
  * @param {Object} deployData
  * @param {string} deployData.pool_name
  * @param {string} deployData.base_mint
+ * @param {string} deployData.position
  * @param {string} deployData.deployed_at
  * @param {string} deployData.closed_at
  * @param {number} deployData.pnl_pct
@@ -65,6 +66,7 @@ export function recordPoolDeploy(poolAddress, deployData) {
   const entry = db[poolAddress];
 
   const deploy = {
+    position: deployData.position || null,
     deployed_at: deployData.deployed_at || null,
     closed_at: deployData.closed_at || new Date().toISOString(),
     pnl_pct: deployData.pnl_pct ?? null,

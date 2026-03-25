@@ -93,6 +93,7 @@ export async function recordPerformance(perf) {
     recordPoolDeploy(perf.pool, {
       pool_name: perf.pool_name,
       base_mint: perf.base_mint,
+      position: perf.position,
       deployed_at: perf.deployed_at,
       closed_at: entry.recorded_at,
       pnl_pct: entry.pnl_pct,

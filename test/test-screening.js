@@ -33,22 +33,24 @@ async function main() {
 
   // Test 3: Pool detail (if we have a pool address)
   if (top.pools.length > 0) {
-    const poolAddr = top.pools[0].pool;
-    console.log(`\n\nFetching detail for ${poolAddr}...`);
-    try {
-      const detail = await getPoolDetail({ pool_address: poolAddr });
-      console.log("Name:", detail.name);
-      console.log("Pool address:", detail.pool_address);
-      console.log("Fee/TVL ratio:", detail.fee_active_tvl_ratio);
-      console.log("Volume 24h:", detail.volume);
-      console.log("Active TVL:", detail.active_tvl);
-      console.log("Volatility:", detail.volatility);
-      console.log("Organic score (base):", detail.token_x?.organic_score);
-      console.log("Holders:", detail.base_token_holders);
-      console.log("Bin step:", detail.dlmm_params?.bin_step);
-      console.log("Price trend:", detail.price_trend);
-    } catch (err) {
-      console.log("Pool detail error:", err.message);
+    for (let i=0;i<top.pools.length;i++){
+      const poolAddr = top.pools[i].pool;
+      console.log(`\n\nFetching detail for ${poolAddr}...`);
+      try {
+        const detail = await getPoolDetail({ pool_address: poolAddr });
+        console.log("Name:", detail.name);
+        console.log("Pool address:", detail.pool_address);
+        console.log("Fee/TVL ratio:", detail.fee_active_tvl_ratio);
+        console.log("Volume 24h:", detail.volume);
+        console.log("Active TVL:", detail.active_tvl);
+        console.log("Volatility:", detail.volatility);
+        console.log("Organic score (base):", detail.token_x?.organic_score);
+        console.log("Holders:", detail.base_token_holders);
+        console.log("Bin step:", detail.dlmm_params?.bin_step);
+        console.log("Price trend:", detail.price_trend);
+      } catch (err) {
+        console.log("Pool detail error:", err.message);
+      }
     }
   }
 

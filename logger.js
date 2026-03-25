@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { config } from "./config.js";
 
 const LOG_DIR = "./logs";
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
@@ -72,6 +73,30 @@ export function logAction(action) {
   const dateStr = timestamp.split("T")[0];
   const actionsFile = path.join(LOG_DIR, `actions-${dateStr}.jsonl`);
   fs.appendFileSync(actionsFile, JSON.stringify(entry) + "\n");
+}
+
+export function logLLM(message) {
+  if (!config.logging.logLLM) return;
+
+  const timestamp = new Date().toISOString();
+  const line = {timestamp, message};
+
+  // File output (daily rotation)
+  const dateStr = timestamp.split("T")[0];
+  const logFile = path.join(LOG_DIR, `llm-${dateStr}.json`);
+  fs.appendFileSync(logFile, JSON.stringify(line) + "\n");
+}
+
+export function logScreener(message) {
+  if (!config.logging.logScreener) return;
+
+  const timestamp = new Date().toISOString();
+  const line = {timestamp, message};
+
+  // File output (daily rotation)
+  const dateStr = timestamp.split("T")[0];
+  const logFile = path.join(LOG_DIR, `screener-${dateStr}.json`);
+  fs.appendFileSync(logFile, JSON.stringify(line) + "\n");
 }
 
 /**

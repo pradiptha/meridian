@@ -178,6 +178,9 @@ const toolMap = {
       // strategy
       minBinStep: ["strategy", "minBinStep"],
       binsBelow: ["strategy", "binsBelow"],
+      // logging
+      logLLM: ["logging", "logLLM"],
+      logScreener: ["logging", "logScreener"],
     };
 
     const applied = {};

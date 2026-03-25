@@ -1,3 +1,5 @@
+import net from "node:net";
+net.setDefaultAutoSelectFamily(false);
 import "dotenv/config";
 import cron from "node-cron";
 import readline from "readline";
@@ -210,6 +212,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     const totalValue = positionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
     const totalUnclaimed = positionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
 
+    log("RULE", `${JSON.stringify(actionMap)}`);
     const reportLines = positionData.map((p) => {
       const act = actionMap.get(p.position);
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
@@ -444,7 +447,8 @@ STEPS:
    smart_wallets=name1,name2 (or none)
    narrative: <one sentence>
    reason: <one sentence why picked over others>
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048);
+4. Verify if the position are succesfully open.
+      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 4096);
     screenReport = content;
   } catch (error) {
     log("cron_error", `Screening cycle failed: ${error.message}`);

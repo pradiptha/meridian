@@ -92,6 +92,12 @@ export const config = {
     generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
   },
 
+  // ─── Logging ───────────────────────────
+  logging: {
+    logLLM:      u.logLLM      ?? false,
+    logScreener: u.logScreener ?? false,
+  },
+
   // ─── Common Token Mints ────────────────
   tokens: {
     SOL:  "So11111111111111111111111111111111111111112",

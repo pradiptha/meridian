@@ -1,7 +1,7 @@
 import { config } from "../config.js";
 import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
-import { log } from "../logger.js";
+import { log, logScreener } from "../logger.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
 
@@ -50,11 +50,17 @@ export async function discoverPools({
   }
 
   const data = await res.json();
+  logScreener({"url":url,"res":data})
 
   const condensed = (data.data || []).map(condensePool);
 
-  // Hard-filter blacklisted tokens and blocked deployers (what pool discovery already gave us)
+  const SOL_MINT = "So11111111111111111111111111111111111111112";
+
+  // Hard-filter blacklisted tokens, non-SOL quote, and blocked deployers
   let pools = condensed.filter((p) => {
+    if (p.quote?.mint !== SOL_MINT) {
+      return false;
+    }
     if (isBlacklisted(p.base?.mint)) {
       log("blacklist", `Filtered blacklisted token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)}) in pool ${p.name}`);
       return false;
@@ -67,7 +73,7 @@ export async function discoverPools({
   });
 
   const filtered = condensed.length - pools.length;
-  if (filtered > 0) log("blacklist", `Filtered ${filtered} pool(s) with blacklisted tokens/devs`);
+  if (filtered > 0) log("screening", `Filtered ${filtered} pool(s) (non-SOL quote, blacklisted, or blocked devs)`);
 
   // If pool discovery didn't supply dev field, batch-fetch from Jupiter for any pools
   // where dev is null — but only if the dev blocklist is non-empty (avoid useless calls)
