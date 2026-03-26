@@ -236,6 +236,58 @@ export async function deployPosition({
 
     log("deploy", `SUCCESS — ${txHashes.length} tx(s): ${txHashes[0]}`);
 
+    // Compute initial_value_usd from Meteora PnL API (authoritative deposit value)
+    // Falls back to LLM-provided value, then to amount-based estimate
+    let computedInitialUsd = initial_value_usd;
+    try {
+      log("initial_usd", "START");
+      await new Promise(r => setTimeout(r, 3000)); // wait for Meteora to index
+      const walletAddress = getWallet().publicKey.toString();
+      const pnlUrl = `https://dlmm.datapi.meteora.ag/positions/${pool_address}/pnl?user=${walletAddress}&status=open&pageSize=100&page=1`;
+      const pnlRes = await fetch(pnlUrl);
+      log("initial_usd", JSON.stringify(pnlRes));
+      if (pnlRes.ok) {
+        const pnlData = await pnlRes.json();
+        const posEntry = (pnlData.positions || []).find(p =>
+          (p.positionAddress || p.address || p.position) === newPosition.publicKey.toString()
+        );
+        if (posEntry) {
+          const apiDeposit = parseFloat(posEntry.allTimeDeposits?.total?.usd || 0);
+          if (apiDeposit > 0) {
+            // Sanity check: reject if implied SOL price is absurd (<$50 or >$500)
+            if (finalAmountY > 0) {
+              const impliedSolPrice = apiDeposit / finalAmountY;
+              if (impliedSolPrice >= 50 && impliedSolPrice <= 500) {
+                computedInitialUsd = apiDeposit;
+                log("deploy", `Initial value from API: $${computedInitialUsd} (SOL ~$${Math.round(impliedSolPrice)})`);
+              } else {
+                log("deploy_warn", `API deposit $${apiDeposit} implies SOL=$${Math.round(impliedSolPrice)} — rejected as bogus`);
+              }
+            } else {
+              computedInitialUsd = apiDeposit;
+              log("deploy", `Initial value from API: $${computedInitialUsd}`);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      log("deploy_warn", `Could not fetch deposit value from API: ${e.message}`);
+    }
+
+    // If API failed and no LLM value, compute from wallet SOL price
+    if (!computedInitialUsd || computedInitialUsd <= 0) {
+      try {
+        const { getWalletBalances } = await import("./wallet.js");
+        const balances = await getWalletBalances();
+        if (balances.sol_price > 0 && finalAmountY > 0) {
+          computedInitialUsd = Math.round(finalAmountY * balances.sol_price * 100) / 100;
+          log("deploy", `Initial value from SOL price: $${computedInitialUsd} (${finalAmountY} SOL @ $${balances.sol_price})`);
+        }
+      } catch (e) {
+        log("deploy_warn", `Could not compute initial value from SOL price: ${e.message}`);
+      }
+    }
+
     _positionsCacheAt = 0;
     trackPosition({
       position: newPosition.publicKey.toString(),
@@ -250,7 +302,7 @@ export async function deployPosition({
       amount_sol: finalAmountY,
       amount_x: finalAmountX,
       active_bin: activeBin.binId,
-      initial_value_usd,
+      initial_value_usd: computedInitialUsd,
     });
 
     const actualBinStep = pool.lbPair.binStep;
@@ -573,6 +625,8 @@ export async function closePosition({ position_address, reason }) {
 
     const txHashes = [];
 
+    const tracked = getTrackedPosition(position_address);
+
     // ─── Step 1: Claim Fees (to clear account state) ───────────
     const recentlyClaimed = tracked?.last_claim_at && (Date.now() - new Date(tracked.last_claim_at).getTime()) < 60_000;
     try {
@@ -648,6 +702,14 @@ export async function closePosition({ position_address, reason }) {
             finalValueUsd = parseFloat(posEntry.allTimeWithdrawals?.total?.usd || 0);
             initialUsd    = parseFloat(posEntry.allTimeDeposits?.total?.usd || 0);
             feesUsd       = parseFloat(posEntry.allTimeFees?.total?.usd || 0) || feesUsd;
+            // Sanity check: reject API deposit value if implied SOL price is absurd
+            if (initialUsd > 0 && tracked.amount_sol > 0) {
+              const impliedSolPrice = initialUsd / tracked.amount_sol;
+              if (impliedSolPrice < 50 || impliedSolPrice > 500) {
+                log("close_warn", `API deposit $${initialUsd} implies SOL=$${Math.round(impliedSolPrice)} — rejected as bogus, using tracked value`);
+                initialUsd = 0; // force fallback path
+              }
+            }
             log("close", `Closed PnL from API: pnl=${pnlUsd.toFixed(2)} USD (${pnlPct.toFixed(2)}%), withdrawn=${finalValueUsd.toFixed(2)}, deposited=${initialUsd.toFixed(2)}`);
           } else {
             log("close_warn", `Position not found in status=closed response — may still be settling`);
@@ -656,8 +718,8 @@ export async function closePosition({ position_address, reason }) {
       } catch (e) {
         log("close_warn", `Closed PnL fetch failed: ${e.message}`);
       }
-      // Fallback to pre-close cache snapshot if closed API had no data
-      if (finalValueUsd === 0) {
+      // Fallback to pre-close cache snapshot or tracked state if closed API had no valid data
+      if (finalValueUsd === 0 || initialUsd <= 0) {
         const cachedPos = _positionsCache?.positions?.find(p => p.position === position_address);
         if (cachedPos) {
           pnlUsd        = cachedPos.pnl_usd   ?? 0;
