@@ -5,7 +5,7 @@ import { getPerformanceSummary } from "./lessons.js";
 const STATE_FILE = "./state.json";
 const LESSONS_FILE = "./lessons.json";
 
-export async function generateBriefing() {
+export async function generateBriefing(returnPerfJson = false) {
   const state = loadJson(STATE_FILE) || { positions: {}, recentEvents: [] };
   const lessonsData = loadJson(LESSONS_FILE) || { lessons: [], performance: [] };
 
@@ -19,6 +19,11 @@ export async function generateBriefing() {
 
   // 2. Performance Activity (from performance log)
   const perfLast24h = (lessonsData.performance || []).filter(p => new Date(p.recorded_at) > last24h);
+
+  if (returnPerfJson) {
+    return JSON.stringify(perfLast24h, null, 2);
+  }
+
   const totalPnLUsd = perfLast24h.reduce((sum, p) => sum + (p.pnl_usd || 0), 0);
   const totalFeesUsd = perfLast24h.reduce((sum, p) => sum + (p.fees_earned_usd || 0), 0);
 

@@ -342,6 +342,33 @@ let _positionsCacheAt = 0;
 let _positionsInflight = null; // deduplicates concurrent calls
 
 // ─── Fetch DLMM PnL API for all positions in a pool ────────────
+async function fetchWithRetry(url, maxRetries = 3, delayMs = 2000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        if (attempt < maxRetries) {
+          log("pnl_api_retry", `Attempt ${attempt}/${maxRetries} failed: HTTP ${res.status}, retrying in ${delayMs}ms...`);
+          await new Promise(r => setTimeout(r, delayMs));
+          continue;
+        }
+        return { ok: false, status: res.status, body };
+      }
+      const data = await res.json();
+      return { ok: true, data };
+    } catch (e) {
+      if (attempt < maxRetries) {
+        log("pnl_api_retry", `Attempt ${attempt}/${maxRetries} error: ${e.message}, retrying in ${delayMs}ms...`);
+        await new Promise(r => setTimeout(r, delayMs));
+        continue;
+      }
+      return { ok: false, error: e.message };
+    }
+  }
+  return { ok: false, error: "Max retries exceeded" };
+}
+
 async function fetchDlmmPnlForPool(poolAddress, walletAddress) {
   const url = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${walletAddress}&status=open&pageSize=100&page=1`;
   try {
@@ -692,9 +719,9 @@ export async function closePosition({ position_address, reason }) {
       let feesUsd = tracked.total_fees_claimed_usd || 0;
       try {
         const closedUrl = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toString()}&status=closed&pageSize=50&page=1`;
-        const res = await fetch(closedUrl);
-        if (res.ok) {
-          const data = await res.json();
+        const result = await fetchWithRetry(closedUrl, 3, 2000);
+        if (result.ok) {
+          const data = result.data;
           const posEntry = (data.positions || []).find(p => p.positionAddress === position_address);
           if (posEntry) {
             pnlUsd        = parseFloat(posEntry.pnlUsd || 0);
@@ -714,6 +741,8 @@ export async function closePosition({ position_address, reason }) {
           } else {
             log("close_warn", `Position not found in status=closed response — may still be settling`);
           }
+        } else {
+          log("close_warn", `Closed PnL fetch failed after 3 retries: ${result.status || result.error}`);
         }
       } catch (e) {
         log("close_warn", `Closed PnL fetch failed: ${e.message}`);
