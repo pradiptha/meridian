@@ -291,7 +291,14 @@ function condensePool(p) {
     // Price action
     price: p.pool_price,
     price_change_pct: fix(p.pool_price_change_pct, 1),
-    price_trend: p.price_trend,
+    price_trend_pct: (() => {
+      const trend = p.price_trend;
+      if (!trend || !Array.isArray(trend) || trend.length < 2) return null;
+      const secondLast = trend[trend.length - 2];
+      const last = trend[trend.length - 1];
+      if (secondLast <= 0) return null;
+      return fix(((last - secondLast) / secondLast) * 100, 2);
+    })(),
     min_price: p.min_price,
     max_price: p.max_price,
 

@@ -422,7 +422,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         pool.price_vs_ath_pct != null ? `  ath: price_vs_ath=${pool.price_vs_ath_pct}%${pool.top_cluster_trend ? `, top_cluster=${pool.top_cluster_trend}` : ""}` : null,
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
         activeBin != null ? `  active_bin: ${activeBin}` : null,
-        priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
+        priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, price_trend=${pool.price_trend_pct != null ? (pool.price_trend_pct >= 0 ? "+" : "") + pool.price_trend_pct + "%" : "?"}%, net_buyers=${netBuyers ?? "?"}` : null,
         n?.narrative ? `  narrative: ${n.narrative.slice(0, 500)}` : `  narrative: none`,
         mem ? `  memory: ${mem}` : null,
       ].filter(Boolean).join("\n");
@@ -437,7 +437,7 @@ PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
 STEPS:
-1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
+1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics — prioritize NEGATIVE price_trend (price dropping = lower OOR risk).
 2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    bins_below = round(35 + (volatility/5)*55) clamped to [35,90].
 3. Report in this exact format (no tables, no extra sections):
