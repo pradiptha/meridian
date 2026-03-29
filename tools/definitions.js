@@ -1072,7 +1072,6 @@ Blacklisted tokens are filtered BEFORE the LLM even sees pool candidates.`,
       }
     }
   },
-];
   {
     type: "function",
     function: {
@@ -1093,3 +1092,4 @@ Blacklisted tokens are filtered BEFORE the LLM even sees pool candidates.`,
       }
     }
   }
+];
