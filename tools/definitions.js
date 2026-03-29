@@ -1073,3 +1073,23 @@ Blacklisted tokens are filtered BEFORE the LLM even sees pool candidates.`,
     }
   },
 ];
+  {
+    type: "function",
+    function: {
+      name: "repair_performance",
+      description: "Repair incorrect performance data in lessons.json by fetching accurate data from Meteora PnL API. Checks and fixes: initial_value_usd, fees_earned_usd, pnl_usd, pnl_pct.",
+      parameters: {
+        type: "object",
+        properties: {
+          dry_run: {
+            type: "boolean",
+            description: "If true, preview changes without saving. Default false."
+          },
+          pool_filter: {
+            type: "string",
+            description: "Optional pool address to only repair entries for a specific pool."
+          }
+        }
+      }
+    }
+  }

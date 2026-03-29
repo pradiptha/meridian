@@ -108,12 +108,17 @@ export async function recordPerformance(perf) {
 
   // Evolve thresholds every 5 closed positions
   if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
+    log("evolve", "Starting Auto Evolve")
     const { config, reloadScreeningThresholds } = await import("./config.js");
     const result = evolveThresholds(data.performance, config);
     if (result?.changes && Object.keys(result.changes).length > 0) {
       reloadScreeningThresholds();
       log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
+    } else {
+      log("evolve", "Evolve Failed")
     }
+  } else {
+    log("evolve", "Not evolved now")
   }
 
 }
@@ -126,8 +131,8 @@ function derivLesson(perf) {
   const tags = [];
 
   // Categorize outcome
-  const outcome = perf.pnl_pct >= 5 ? "good"
-    : perf.pnl_pct >= 0 ? "neutral"
+  const outcome = perf.pnl_pct >= 3 ? "good"
+    : perf.pnl_pct >= -1 ? "neutral"
     : perf.pnl_pct >= -5 ? "poor"
     : "bad";
 
