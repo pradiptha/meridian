@@ -118,7 +118,7 @@ export async function recordPerformance(perf) {
       log("evolve", "Evolve Failed")
     }
   } else {
-    log("evolve", "Not evolved now")
+    log("evolve", `Not evolved now. perf length: ${data.performance.length}. mod: ${data.performance.length % MIN_EVOLVE_POSITIONS}`)
   }
 
 }

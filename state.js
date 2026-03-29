@@ -298,6 +298,14 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     };
   }
 
+  // ── Take profit ────────────────────────────────────────────────
+  if (currentPnlPct != null && mgmtConfig.takeProfitFeePct != null && currentPnlPct >= mgmtConfig.takeProfitFeePct) {
+    return {
+      action: "TAKE_PROFIT",
+      reason: `Take profit: PnL ${currentPnlPct.toFixed(2)}% >= ${mgmtConfig.takeProfitFeePct}%`,
+    };
+  }
+
   // ── Trailing TP ────────────────────────────────────────────────
   if (pos.trailing_active) {
     const dropFromPeak = pos.peak_pnl_pct - currentPnlPct;
