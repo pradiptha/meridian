@@ -42,6 +42,7 @@ Agents are powered via **OpenRouter** and can be swapped for any compatible mode
 - [OpenRouter](https://openrouter.ai) API key
 - Solana wallet (base58 private key)
 - Telegram bot token (optional, for notifications)
+- X/Twitter account logged in (optional, for sentiment analysis — free, uses browser cookies)
 
 ---
 
@@ -73,7 +74,43 @@ DRY_RUN=true                           # set false for live trading
 
 > **RPC**: defaults to `https://pump.helius-rpc.com` (no key needed). Override with `RPC_URL=` in `.env`.
 
-**4. Copy the example config**
+**4. Set up X Sentiment (optional)**
+
+X sentiment analysis is free — it uses your browser cookies to scrape X posts, no API key needed.
+
+1. Log into X in your browser
+2. Open DevTools (`F12`) > Application > Cookies > `x.com`
+3. Copy the values of `auth_token` and `ct0` cookies
+4. Add them to `.env`:
+
+```env
+X_AUTH_TOKEN=your_auth_token_here
+X_CT0=your_ct0_here
+```
+
+5. Add trusted X accounts — these are the analysts whose posts you want to monitor:
+
+```bash
+# Via chat after startup:
+> add @solana_legend as trusted X account
+> add @degen_advisor as trusted X account
+
+# Or edit x-accounts.json directly
+```
+
+6. Enable in `user-config.json`:
+
+```json
+{
+  "xSentimentEnabled": true,
+  "minSentimentScore": -30,
+  "xLookbackDays": 7
+}
+```
+
+> **Note**: X cookies expire periodically (every few weeks). When expired, you'll get a Telegram alert. To refresh: log into X in browser, copy new cookies from DevTools, update `.env`, restart.
+
+**5. Copy the example config**
 
 ```bash
 cp user-config.example.json user-config.json
@@ -116,6 +153,9 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `category` | `trending` | Pool category filter for screening |
 | `takeProfitFeePct` | `5` | Close position when unclaimed fees reach this % of deployed capital |
 | `outOfRangeWaitMinutes` | `30` | Minutes a position can be out of range before alerting / acting |
+| `xSentimentEnabled` | `false` | Enable X/Twitter sentiment analysis during screening and management |
+| `minSentimentScore` | `-30` | Hard filter threshold (-100 to 100). Tokens with lower sentiment are auto-rejected |
+| `xLookbackDays` | `7` | How many days back to search for posts about a token |
 
 ---
 
@@ -140,6 +180,9 @@ After startup, an interactive prompt is available. The prompt shows a live count
 | `/thresholds` | Show current screening thresholds and closed-position performance stats |
 | `/evolve` | Trigger threshold evolution from performance data (requires 5+ closed positions) |
 | `/stop` | Graceful shutdown |
+| `add @handle as trusted X account` | Add an X account to the trusted sentiment list |
+| `remove @handle from trusted accounts` | Remove an X account |
+| `list trusted X accounts` | Show all trusted X accounts |
 | `<anything else>` | Free-form chat — ask the agent questions, request actions, analyze pools |
 
 Free-form chat persists session history (last 10 exchanges), so you can have a continuous conversation: `"what do you think of pool #2?"`, `"close all positions"`, `"how much have we earned today?"`.
@@ -164,6 +207,47 @@ On first message, the agent auto-registers your chat ID and begins sending notif
 - On close: pair and PnL
 
 You can also chat with the agent via Telegram using the same free-form interface as the REPL: `"check wallet 7tB8..."`, `"who are the top LPers in pool ABC..."`, `"close all positions"`, etc.
+
+---
+
+## X Sentiment
+
+Meridian can analyze X/Twitter sentiment from trusted accounts when evaluating tokens. This helps detect scam warnings, rug pull signals, or bullish alpha from analysts you trust.
+
+### How it works
+
+When screening pools, Meridian searches for recent X posts mentioning each token's contract address, filtered to your trusted accounts list. Posts are scored using keyword analysis (fast filter), then the raw post text is injected into the screener prompt so the LLM can make a nuanced judgment.
+
+**Hard filter:** If keyword sentiment is below `minSentimentScore` (default -30), the token is auto-rejected without LLM evaluation.
+
+**Management:** If trusted accounts start posting negatively about a token you already hold (Rule 6), the position is flagged for close.
+
+**Cost:** Free — uses your browser session cookies to hit X's internal API. No paid API key required.
+
+### Cookie management
+
+X cookies expire periodically (typically every few weeks). When expired:
+- You'll get a Telegram alert: `⚠️ X cookies expired — sentiment analysis disabled`
+- Sentiment is auto-disabled until you refresh cookies
+- To refresh: log into X in browser, copy new `auth_token` and `ct0` from DevTools, update `.env`, restart
+
+### Managing trusted accounts
+
+Via chat:
+```
+> add @solana_legend as trusted X account
+> remove @bad_take from trusted accounts
+> list trusted X accounts
+```
+
+Or edit `x-accounts.json` directly:
+```json
+{
+  "accounts": [
+    { "handle": "solana_legend", "category": "alpha", "addedAt": "2026-03-31T..." }
+  ]
+}
+```
 
 ---
 

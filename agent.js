@@ -4,8 +4,8 @@ import { buildSystemPrompt } from "./prompt.js";
 import { executeTool } from "./tools/executor.js";
 import { tools } from "./tools/definitions.js";
 
-const MANAGER_TOOLS  = new Set(["close_position", "claim_fees", "swap_token", "update_config", "get_position_pnl", "get_my_positions", "set_position_note", "add_pool_note", "get_wallet_balance", "repair_performance"]);
-const SCREENER_TOOLS = new Set(["deploy_position", "get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory", "add_pool_note", "add_to_blacklist", "update_config", "get_wallet_balance", "get_my_positions"]);
+const MANAGER_TOOLS  = new Set(["close_position", "claim_fees", "swap_token", "update_config", "get_position_pnl", "get_my_positions", "set_position_note", "add_pool_note", "get_wallet_balance", "repair_performance", "get_x_sentiment"]);
+const SCREENER_TOOLS = new Set(["deploy_position", "get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory", "add_pool_note", "add_to_blacklist", "update_config", "get_wallet_balance", "get_my_positions", "get_x_sentiment"]);
 
 // Intent → tool subsets for GENERAL role
 const INTENT_TOOLS = {
@@ -22,6 +22,7 @@ const INTENT_TOOLS = {
   strategy:  new Set(["list_strategies", "get_strategy", "add_strategy", "update_strategy", "delete_strategy", "set_active_strategy"]),
   screen:    new Set(["get_top_candidates", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "check_smart_wallets_on_pool", "get_pool_detail", "get_my_positions"]),
   memory:    new Set(["get_pool_memory", "add_pool_note", "list_blacklist", "add_to_blacklist", "remove_from_blacklist"]),
+  social:    new Set(["add_x_account", "remove_x_account", "list_x_accounts", "get_x_sentiment"]),
 };
 
 const INTENT_PATTERNS = [
@@ -38,6 +39,7 @@ const INTENT_PATTERNS = [
   { intent: "strategy",  re: /\b(strategy|strategies)\b/i },
   { intent: "screen",    re: /\b(screen|candidate|find pool|search|research)\b/i },
   { intent: "memory",    re: /\b(memory|pool history|note|remember)\b/i },
+  { intent: "social",    re: /\b(x account|trusted.*account|add.*twitter|remove.*twitter|twitter.*list|sentiment.*check|x sentiment)\b/i },
 ];
 
 function getToolsForRole(agentType, goal = "") {

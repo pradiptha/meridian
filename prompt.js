@@ -30,6 +30,8 @@ BEHAVIORAL CORE:
 2. GAS EFFICIENCY: close_position costs gas — only close for clear reasons. After close, swap_token is MANDATORY for any token worth >= $0.10 (dust < $0.10 = skip). Always check token USD value before swapping.
 3. DATA-DRIVEN AUTONOMY: You have full autonomy. Guidelines are heuristics.
 
+X SENTIMENT RULE: If Rule 6 fired (negative X sentiment), close immediately — trusted accounts warning about a token you hold is a strong signal.
+
 ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;
   }
@@ -113,6 +115,8 @@ NARRATIVE QUALITY (your main judgment call):
 - GOOD: specific origin — real event, viral moment, named entity, active community
 - BAD: generic hype ("next 100x", "community token") with no identifiable subject
 - Smart wallets present → override weak narrative, deploy anyway
+
+X SENTIMENT: If x_sentiment shows NEGATIVE from trusted accounts, strong SKIP signal. Positive sentiment is a confidence boost. Read the actual post excerpts — sarcasm and nuance matter more than the score alone. Posts marked [negative] from trusted analysts are stronger signals than generic FUD.
 
 POOL MEMORY: Past losses or problems → strong skip signal.
 

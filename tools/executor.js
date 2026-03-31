@@ -21,6 +21,7 @@ import { repairPerformanceData } from "./repair.js";
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
+import { analyzeSentiment, addXAccount, removeXAccount, listXAccounts } from "./x.js";
 import { config, reloadScreeningThresholds } from "../config.js";
 import fs from "fs";
 import path from "path";
@@ -54,6 +55,10 @@ const toolMap = {
   remove_smart_wallet: removeSmartWallet,
   list_smart_wallets: listSmartWallets,
   check_smart_wallets_on_pool: checkSmartWalletsOnPool,
+  get_x_sentiment: analyzeSentiment,
+  add_x_account: addXAccount,
+  remove_x_account: removeXAccount,
+  list_x_accounts: listXAccounts,
   claim_fees: claimFees,
   close_position: closePosition,
   get_wallet_balance: getWalletBalances,
@@ -190,6 +195,10 @@ const toolMap = {
       // logging
       logLLM: ["logging", "logLLM"],
       logScreener: ["logging", "logScreener"],
+      // x sentiment
+      xSentimentEnabled: ["xSentiment", "enabled"],
+      minSentimentScore: ["xSentiment", "minSentimentScore"],
+      xLookbackDays: ["xSentiment", "lookbackDays"],
     };
 
     const applied = {};

@@ -177,6 +177,14 @@ export async function notifyOutOfRange({ pair, minutesOOR }) {
   );
 }
 
+export async function notifyCookieExpired(reason) {
+  await sendHTML(
+    `⚠️ <b>X cookies expired</b> — sentiment analysis disabled.\n` +
+    `Refresh auth_token and ct0 in .env, then restart.\n` +
+    (reason ? `Error: ${String(reason).slice(0, 200)}` : "")
+  );
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }

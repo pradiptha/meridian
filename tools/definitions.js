@@ -378,6 +378,7 @@ Risk: maxPositions, maxDeployAmount
 Schedule: managementIntervalMin, screeningIntervalMin
 Models: managementModel, screeningModel, generalModel
 Strategy: binsBelow
+X Sentiment: xSentimentEnabled, minSentimentScore, xLookbackDays
 
 Reason is optional but helpful — logged as a lesson when provided.`,
       parameters: {
@@ -1090,6 +1091,75 @@ Blacklisted tokens are filtered BEFORE the LLM even sees pool candidates.`,
           }
         }
       }
+    }
+  },
+
+  // ═══════════════════════════════════════════
+  //  X/TWITTER SENTIMENT TOOLS
+  // ═══════════════════════════════════════════
+
+  {
+    type: "function",
+    function: {
+      name: "get_x_sentiment",
+      description: `Analyze X/Twitter sentiment for a token from trusted accounts.
+Searches for recent posts mentioning the token's contract address, filtered to your trusted account list.
+Returns sentiment label (POSITIVE/NEUTRAL/NEGATIVE), score (-100 to 100), post count, and top post excerpts.
+
+Use during screening to gauge community sentiment from analysts you trust.
+Results are cached for 30 minutes per token to avoid redundant API calls.`,
+      parameters: {
+        type: "object",
+        properties: {
+          mint: { type: "string", description: "Token contract address (base58 mint)" },
+          lookback_days: { type: "number", description: "How many days back to search (default: 7)" }
+        },
+        required: ["mint"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "add_x_account",
+      description: `Add a trusted X/Twitter account to the sentiment monitor.
+Posts from this account mentioning token contract addresses will be included in sentiment analysis.
+Use when the user says "add @handle as trusted X account" or "track this X account".`,
+      parameters: {
+        type: "object",
+        properties: {
+          handle: { type: "string", description: "X handle without @ (e.g. 'solana_legend')" },
+          category: { type: "string", enum: ["alpha", "analyst", "dev", "kol", "news"], description: "Account category (default: alpha)" }
+        },
+        required: ["handle"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "remove_x_account",
+      description: `Remove a trusted X/Twitter account from the sentiment monitor.
+Use when the user says "remove @handle from trusted accounts" or "untrack this X account".`,
+      parameters: {
+        type: "object",
+        properties: {
+          handle: { type: "string", description: "X handle without @ to remove" }
+        },
+        required: ["handle"]
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "list_x_accounts",
+      description: `List all trusted X/Twitter accounts used for sentiment analysis.
+Shows handle, category, and when each was added.`,
+      parameters: { type: "object", properties: {} }
     }
   }
 ];

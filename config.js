@@ -98,6 +98,13 @@ export const config = {
     logScreener: u.logScreener ?? false,
   },
 
+  // ─── X/Twitter Sentiment ────────────────
+  xSentiment: {
+    enabled:            u.xSentimentEnabled   ?? false,
+    minSentimentScore:  u.minSentimentScore   ?? -30,  // range -100 to 100; below = auto-reject
+    lookbackDays:       u.xLookbackDays       ?? 7,
+  },
+
   // ─── Common Token Mints ────────────────
   tokens: {
     SOL:  "So11111111111111111111111111111111111111112",

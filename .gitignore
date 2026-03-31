@@ -17,6 +17,7 @@ pool-memory.json
 token-blacklist.json
 dev-blocklist.json
 strategy-library.json
+x-accounts.json
 
 # Logs
 logs/

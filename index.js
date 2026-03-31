@@ -18,10 +18,19 @@ import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
+import { analyzeSentiment, checkCookieHealth, isCookieExpired } from "./tools/x.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
 log("startup", `Model: ${process.env.LLM_MODEL || "hermes-3-405b"}`);
+
+// Validate X cookies on startup (non-blocking)
+if (config.xSentiment.enabled) {
+  checkCookieHealth().then((r) => {
+    if (!r.healthy) log("startup_warn", `X sentiment disabled: ${r.reason}`);
+    else log("startup", "X sentiment: cookies valid");
+  }).catch(() => {});
+}
 
 const TP_PCT = config.management.takeProfitFeePct;
 const DEPLOY = config.management.deployAmountSol;
@@ -131,6 +140,22 @@ export async function runManagementCycle({ silent = false } = {}) {
       return { ...p, recall: recallForPool(p.pool) };
     });
 
+    // Pre-fetch X sentiment for all positions (async, parallel)
+    const sentimentByPosition = new Map();
+    if (config.xSentiment.enabled && !isCookieExpired()) {
+      const sentimentResults = await Promise.allSettled(
+        positionData.filter(p => p.base_mint).map(async (p) => {
+          const xs = await analyzeSentiment({ mint: p.base_mint });
+          return { position: p.position, xs };
+        })
+      );
+      for (const r of sentimentResults) {
+        if (r.status === "fulfilled" && r.value?.xs) {
+          sentimentByPosition.set(r.value.position, r.value.xs);
+        }
+      }
+    }
+
     // JS trailing TP check
     const exitMap = new Map();
     for (const p of positionData) {
@@ -198,6 +223,12 @@ export async function runManagementCycle({ silent = false } = {}) {
           p.fee_per_tvl_24h < config.management.minFeePerTvl24h &&
           (p.age_minutes ?? 0) >= 60) {
         actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
+        continue;
+      }
+      // Rule 6: negative X sentiment from trusted accounts
+      const xs = sentimentByPosition.get(p.position);
+      if (xs && xs.score != null && xs.score < config.xSentiment.minSentimentScore) {
+        actionMap.set(p.position, { action: "CLOSE", rule: 6, reason: `negative X sentiment (${xs.score})` });
         continue;
       }
       // Claim rule
@@ -351,10 +382,11 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const allCandidates = [];
     for (const pool of candidates) {
       const mint = pool.base?.mint;
-      const [smartWallets, narrative, tokenInfo] = await Promise.allSettled([
+      const [smartWallets, narrative, tokenInfo, xSentiment] = await Promise.allSettled([
         checkSmartWalletsOnPool({ pool_address: pool.pool }),
         mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
         mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
+        (config.xSentiment.enabled && mint) ? analyzeSentiment({ mint }) : Promise.resolve(null),
       ]);
       allCandidates.push({
         pool,
@@ -362,15 +394,21 @@ export async function runScreeningCycle({ silent = false } = {}) {
         n: narrative.status === "fulfilled" ? narrative.value : null,
         ti: tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null,
         mem: recallForPool(pool.pool),
+        xs: xSentiment.status === "fulfilled" ? xSentiment.value : null,
       });
       await new Promise(r => setTimeout(r, 150)); // avoid 429s
     }
 
     // Only filter blocked launchpads — everything else is for the LLM to judge
-    const passing = allCandidates.filter(({ pool, ti }) => {
+    const passing = allCandidates.filter(({ pool, ti, xs }) => {
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
         log("screening", `Skipping ${pool.name} — blocked launchpad (${launchpad})`);
+        return false;
+      }
+      // X sentiment hard filter
+      if (config.xSentiment.enabled && xs?.score != null && xs.score < config.xSentiment.minSentimentScore) {
+        log("screening", `Skipping ${pool.name} — negative X sentiment (${xs.score})`);
         return false;
       }
       return true;
@@ -387,7 +425,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     );
 
     // Build compact candidate blocks
-    const candidateBlocks = passing.map(({ pool, sw, n, ti, mem }, i) => {
+    const candidateBlocks = passing.map(({ pool, sw, n, ti, mem, xs }, i) => {
       const botPct = ti?.audit?.bot_holders_pct ?? "?";
       const top10Pct = ti?.audit?.top_holders_pct ?? "?";
       const feesSol = ti?.global_fees_sol ?? "?";
@@ -424,6 +462,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         activeBin != null ? `  active_bin: ${activeBin}` : null,
         priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, price_trend=${pool.price_trend_pct != null ? (pool.price_trend_pct >= 0 ? "+" : "") + pool.price_trend_pct + "%" : "?"}%, net_buyers=${netBuyers ?? "?"}` : null,
         n?.narrative ? `  narrative: ${n.narrative.slice(0, 500)}` : `  narrative: none`,
+        xs && xs.sentiment !== "DISABLED" && xs.sentiment !== "COOKIE_EXPIRED" && xs.sentiment !== "NO_ACCOUNTS" ? `  x_sentiment: ${xs.sentiment} (${xs.score}) | ${xs.post_count} posts (${xs.positive_count} pos, ${xs.negative_count} neg)${xs.posts?.length ? "\n" + xs.posts.map(p => `    [${p.score}] @${p.author.replace("@","")}: ${p.text}`).join("\n") : ""}` : null,
         mem ? `  memory: ${mem}` : null,
       ].filter(Boolean).join("\n");
     });
