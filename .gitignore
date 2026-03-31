@@ -15,6 +15,7 @@ lessons.json
 smart-wallets.json
 pool-memory.json
 token-blacklist.json
+dev-blocklist.json
 strategy-library.json
 
 # Logs

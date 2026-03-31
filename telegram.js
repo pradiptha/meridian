@@ -55,7 +55,7 @@ export async function sendMessage(text) {
     });
     if (!res.ok) {
       const err = await res.text();
-      log("telegram_error", `sendMessage ${res.status}: ${err.slice(0, 100)}`);
+      log("telegram_error", `sendMessage ${res.status}: ${err.slice(0, 500)}`);
     }
   } catch (e) {
     log("telegram_error", `sendMessage failed: ${e.message}`);
@@ -64,19 +64,21 @@ export async function sendMessage(text) {
 
 export async function sendHTML(html) {
   if (!TOKEN || !chatId) return;
+  // Escape bare < that aren't part of valid Telegram HTML tags (e.g. <= from lesson rules)
+  const safe = html.replace(/<(?!(?:\/[a-zA-Z]|[a-zA-Z]))/g, "&lt;");
   try {
     const res = await fetch(`${BASE}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: html.slice(0, 4096),
+        text: safe.slice(0, 4096),
         parse_mode: "HTML",
       }),
     });
     if (!res.ok) {
       const err = await res.text();
-      log("telegram_error", `sendHTML ${res.status}: ${err.slice(0, 100)}`);
+      log("telegram_error", `sendHTML ${res.status}: ${err.slice(0, 500)}`);
     }
   } catch (e) {
     log("telegram_error", `sendHTML failed: ${e.message}`);
