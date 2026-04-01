@@ -25,6 +25,8 @@ const INTENT_TOOLS = {
   study:       new Set(["study_top_lpers", "get_top_lpers", "get_pool_detail", "search_pools", "get_token_info", "discover_pools"]),
   performance: new Set(["get_performance_history", "get_my_positions", "get_position_pnl"]),
   lessons:     new Set(["add_lesson", "pin_lesson", "unpin_lesson", "list_lessons", "clear_lessons"]),
+  social:      new Set(["add_x_account", "remove_x_account", "list_x_accounts", "get_x_sentiment"]),
+  blacklist:   new Set(["add_to_blacklist", "remove_from_blacklist", "list_blacklist"]),
 };
 
 const INTENT_PATTERNS = [
@@ -44,6 +46,8 @@ const INTENT_PATTERNS = [
   { intent: "study",       re: /\b(study top|top lper|best lper|who.?s lping|lp behavior|lper)\b/i },
   { intent: "performance", re: /\b(performance|history|how.?s the bot|how.?s it doing|stats|report)\b/i },
   { intent: "lessons",     re: /\b(lesson|learned|teach|pin|unpin|clear lesson|what did you learn)\b/i },
+  { intent: "social",      re: /\b(x account|trusted.*account|add.*twitter|remove.*twitter|twitter.*list|sentiment.*check|x sentiment)\b/i },
+  { intent: "blacklist",   re: /\b(blacklist|block|ban)\b/i },
 ];
 
 function getToolsForRole(agentType, goal = "") {
