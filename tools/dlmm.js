@@ -485,11 +485,23 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
           upper_bin:          upperBin,
           active_bin:         activeBin,
           in_range:           !isOOR,
-          unclaimed_fees_usd: Math.round((binData ? parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0) : parseFloat(config.management.solMode ? (pool.unclaimedFeesSol || 0) : (pool.unclaimedFees || 0))) * 10000) / 10000,
-          total_value_usd:    Math.round((binData ? parseFloat(binData.unrealizedPnl?.balances || 0) : parseFloat(config.management.solMode ? (pool.balancesSol || 0) : (pool.balances || 0))) * 10000) / 10000,
-          collected_fees_usd: Math.round(parseFloat(binData?.allTimeFees?.total?.usd || 0) * 10000) / 10000,
-          pnl_usd:            Math.round(parseFloat(binData ? (binData.pnlUsd || 0) : (config.management.solMode ? (pool.pnlSol || 0) : (pool.pnl || 0))) * 10000) / 10000,
-          pnl_pct:            Math.round(parseFloat(binData ? (binData.pnlPctChange || 0) : (config.management.solMode ? (pool.pnlSolPctChange || 0) : (pool.pnlPctChange || 0))) * 100) / 100,
+          unclaimed_fees_usd: Math.round((binData
+            ? config.management.solMode
+              ? parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.amountSol || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.amountSol || 0)
+              : parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0)
+            : parseFloat(config.management.solMode ? (pool.unclaimedFeesSol || 0) : (pool.unclaimedFees || 0))) * 10000) / 10000,
+          total_value_usd:    Math.round((binData
+            ? config.management.solMode
+              ? parseFloat(binData.unrealizedPnl?.balancesSol || 0)
+              : parseFloat(binData.unrealizedPnl?.balances || 0)
+            : parseFloat(config.management.solMode ? (pool.balancesSol || 0) : (pool.balances || 0))) * 10000) / 10000,
+          collected_fees_usd: Math.round(parseFloat(config.management.solMode ? (binData?.allTimeFees?.total?.sol || 0) : (binData?.allTimeFees?.total?.usd || 0)) * 10000) / 10000,
+          pnl_usd:            Math.round(parseFloat(binData
+            ? config.management.solMode ? (binData.pnlSol || 0) : (binData.pnlUsd || 0)
+            : config.management.solMode ? (pool.pnlSol || 0) : (pool.pnl || 0)) * 10000) / 10000,
+          pnl_pct:            Math.round(parseFloat(binData
+            ? config.management.solMode ? (binData.pnlSolPctChange || 0) : (binData.pnlPctChange || 0)
+            : config.management.solMode ? (pool.pnlSolPctChange || 0) : (pool.pnlPctChange || 0)) * 100) / 100,
           fee_per_tvl_24h:    Math.round(parseFloat(binData?.feePerTvl24h || pool.feePerTvl24h || 0) * 100) / 100,
           age_minutes:        binData?.createdAt ? Math.floor((Date.now() - binData.createdAt * 1000) / 60000) : ageFromState,
           minutes_out_of_range: minutesOutOfRange(positionAddress),

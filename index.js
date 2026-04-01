@@ -282,7 +282,7 @@ export async function runManagementCycle({ silent = false } = {}) {
           `POSITION: ${p.pair} (${p.position})`,
           `  pool: ${p.pool}`,
           `  action: ${act.action}${act.rule && act.rule !== "exit" ? ` — Rule ${act.rule}: ${act.reason}` : ""}${act.rule === "exit" ? ` — ⚡ Trailing TP: ${act.reason}` : ""}`,
-          `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees_usd: $${p.unclaimed_fees_usd} | value: $${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
+          `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur}${p.unclaimed_fees_usd} | value: ${cur}${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
           `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
           p.instruction ? `  instruction: "${p.instruction}"` : null,
         ].filter(Boolean).join("\n");
@@ -746,11 +746,12 @@ if (isTTY) {
       try {
         const { positions, total_positions } = await getMyPositions({ force: true });
         if (total_positions === 0) { await sendMessage("No open positions."); return; }
+        const cur = config.management.solMode ? "◎" : "$";
         const lines = positions.map((p, i) => {
-          const pnl = p.pnl_usd >= 0 ? `+$${p.pnl_usd}` : `-$${Math.abs(p.pnl_usd)}`;
+          const pnl = p.pnl_usd >= 0 ? `+${cur}${p.pnl_usd}` : `-${cur}${Math.abs(p.pnl_usd)}`;
           const age = p.age_minutes != null ? `${p.age_minutes}m` : "?";
           const oor = !p.in_range ? " ⚠️OOR" : "";
-          return `${i + 1}. ${p.pair} | $${p.total_value_usd} | PnL: ${pnl} | fees: $${p.unclaimed_fees_usd} | ${age}${oor}`;
+          return `${i + 1}. ${p.pair} | ${cur}${p.total_value_usd} | PnL: ${pnl} | fees: ${cur}${p.unclaimed_fees_usd} | ${age}${oor}`;
         });
         await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\n/close <n> to close | /set <n> <note> to set instruction`);
       } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => { }); }
@@ -767,7 +768,7 @@ if (isTTY) {
         await sendMessage(`Closing ${pos.pair}...`);
         const result = await closePosition({ position_address: pos.position });
         if (result.success) {
-          await sendMessage(`✅ Closed ${pos.pair}\nPnL: $${result.pnl_usd ?? "?"} | txs: ${result.txs?.join(", ")}`);
+          await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | txs: ${result.txs?.join(", ")}`);
         } else {
           await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
         }
@@ -881,7 +882,7 @@ Commands:
         console.log(`Positions: ${positions.total_positions}`);
         for (const p of positions.positions) {
           const status = p.in_range ? "in-range ✓" : "OUT OF RANGE ⚠";
-          console.log(`  ${p.pair.padEnd(16)} ${status}  fees: $${p.unclaimed_fees_usd}`);
+          console.log(`  ${p.pair.padEnd(16)} ${status}  fees: ${config.management.solMode ? "◎" : "$"}${p.unclaimed_fees_usd}`);
         }
         console.log();
       });
