@@ -476,7 +476,7 @@ PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
 STEPS:
-1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics — prioritize NEGATIVE price_trend (price dropping = lower OOR risk).
+1. Pick the best candidate based on narrative quality, smart wallets, sentiment, and pool metrics — prioritize NEGATIVE price_trend (price dropping = lower OOR risk).
 2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    bins_below = round(35 + (volatility/4)*55) clamped to [35,90].
 3. Report in this exact format (no tables, no extra sections):
@@ -486,7 +486,7 @@ STEPS:
    smart_wallets=name1,name2 (or none)
    narrative: <one sentence>
    reason: <one sentence why picked over others>
-4. Verify if the position are succesfully open.
+   sentiment: <one sentence>
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 4096);
     screenReport = content;
   } catch (error) {

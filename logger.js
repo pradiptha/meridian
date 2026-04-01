@@ -100,6 +100,16 @@ export function logScreener(message) {
 }
 
 /**
+ * Log a sentiment check (for tracking X sentiment performance).
+ */
+export function logSentiment(entry) {
+  const timestamp = new Date().toISOString();
+  const dateStr = timestamp.split("T")[0];
+  const logFile = path.join(LOG_DIR, `sentiment-${dateStr}.jsonl`);
+  fs.appendFileSync(logFile, JSON.stringify({ timestamp, ...entry }) + "\n");
+}
+
+/**
  * Log a portfolio snapshot (for tracking performance over time).
  */
 export function logSnapshot(snapshot) {

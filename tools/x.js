@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "../logger.js";
+import { logSentiment } from "../logger.js";
 import { config } from "../config.js";
 import { notifyCookieExpired } from "../telegram.js";
 
@@ -113,19 +114,24 @@ export function resetCookieState() {
  */
 export async function checkCookieHealth() {
   const client = await getXClient();
-  if (!client) return { healthy: false, reason: "no_cookies" };
+  if (!client) {
+    logSentiment({ event: "health_check", healthy: false, reason: _cookieExpired ? "cookie_expired" : "no_cookies" });
+    return { healthy: false, reason: "no_cookies" };
+  }
   try {
     await client.search("solana", { type: "latest", count: 1 });
     log("x_sentiment", "Cookie health check passed");
+    logSentiment({ event: "health_check", healthy: true });
     return { healthy: true };
   } catch (e) {
     const msg = e.message || String(e);
     if (msg.includes("authenticate") || msg.includes("401") || msg.includes("403") || msg.includes("Could not")) {
       markCookieExpired(msg);
+      logSentiment({ event: "health_check", healthy: false, reason: "expired", error: msg });
       return { healthy: false, reason: "expired", message: msg };
     }
-    // Non-auth error (rate limit, network, etc.) — not a cookie issue
     log("x_sentiment_warn", `Cookie health check non-fatal error: ${msg}`);
+    logSentiment({ event: "health_check", healthy: true, warning: msg });
     return { healthy: true, warning: msg };
   }
 }
@@ -149,10 +155,12 @@ async function resolveHandle(client, handle) {
     const user = await client.getUser(handle);
     if (user?.restId) {
       _handleCache.set(handle, { restId: user.restId, name: user.name, fetchedAt: Date.now() });
+      log("x_sentiment", `Resolved @${handle} → ${user.restId} (${user.name})`);
       return user.restId;
     }
   } catch (e) {
     log("x_sentiment_warn", `Failed to resolve handle @${handle}: ${e.message}`);
+    logSentiment({ event: "resolve_handle", handle, success: false, error: e.message });
   }
   return null;
 }
@@ -167,6 +175,7 @@ async function resolveHandle(client, handle) {
  * @returns {Promise<{posts: object[], total: number, from_trusted: number}>}
  */
 export async function searchPostsByCA({ mint, handles = [], lookbackDays = 7 }) {
+  const t0 = Date.now();
   const client = await getXClient();
   if (!client) return { posts: [], total: 0, from_trusted: 0, error: _cookieExpired ? "COOKIE_EXPIRED" : "NO_CLIENT" };
 
@@ -220,6 +229,18 @@ export async function searchPostsByCA({ mint, handles = [], lookbackDays = 7 }) 
   }
 
   const posts = [...allPosts.values()];
+  const duration_ms = Date.now() - t0;
+
+  logSentiment({
+    event: "search",
+    mint,
+    posts_found: posts.length,
+    batches: batches.length,
+    handles: handles.length,
+    lookback_days: lookbackDays,
+    duration_ms,
+  });
+
   return {
     posts: posts.map((t) => {
       // Resolve author handle: try screenName from parsed result, then match restId
@@ -299,11 +320,13 @@ function scorePost(text) {
  * @returns {Promise<object>} Sentiment result
  */
 export async function analyzeSentiment({ mint, lookbackDays = null }) {
+  const t0 = Date.now();
   const days = lookbackDays ?? config.xSentiment.lookbackDays ?? 7;
 
   // Check cache
   const cached = _sentimentCache.get(mint);
   if (cached && Date.now() - cached.fetchedAt < SENTIMENT_CACHE_TTL) {
+    logSentiment({ event: "analyze", mint, sentiment: cached.result.sentiment, score: cached.result.score, post_count: cached.result.post_count, duration_ms: Date.now() - t0, from_cache: true });
     return cached.result;
   }
 
@@ -312,6 +335,7 @@ export async function analyzeSentiment({ mint, lookbackDays = null }) {
   if (accounts.length === 0) {
     const result = { mint, sentiment: "NO_ACCOUNTS", score: 0, post_count: 0, summary: "No trusted X accounts configured" };
     _sentimentCache.set(mint, { result, fetchedAt: Date.now() });
+    logSentiment({ event: "analyze", mint, sentiment: "NO_ACCOUNTS", score: 0, post_count: 0, duration_ms: Date.now() - t0, from_cache: false });
     return result;
   }
 
@@ -319,12 +343,15 @@ export async function analyzeSentiment({ mint, lookbackDays = null }) {
   const searchResult = await searchPostsByCA({ mint, lookbackDays: days });
 
   if (searchResult.error === "COOKIE_EXPIRED") {
+    logSentiment({ event: "analyze", mint, sentiment: "COOKIE_EXPIRED", score: 0, post_count: 0, duration_ms: Date.now() - t0, from_cache: false, error: "cookie_expired" });
     return { mint, sentiment: "COOKIE_EXPIRED", score: 0, post_count: 0, summary: "X cookies expired — refresh X_AUTH_TOKEN and X_CT0 in .env" };
   }
   if (searchResult.error === "NO_TRUSTED_ACCOUNTS") {
+    logSentiment({ event: "analyze", mint, sentiment: "NO_ACCOUNTS", score: 0, post_count: 0, duration_ms: Date.now() - t0, from_cache: false, error: "no_accounts" });
     return { mint, sentiment: "NO_ACCOUNTS", score: 0, post_count: 0, summary: "No trusted X accounts configured" };
   }
   if (searchResult.error === "NO_CLIENT") {
+    logSentiment({ event: "analyze", mint, sentiment: "DISABLED", score: 0, post_count: 0, duration_ms: Date.now() - t0, from_cache: false, error: "no_client" });
     return { mint, sentiment: "DISABLED", score: 0, post_count: 0, summary: "X sentiment not configured" };
   }
 
@@ -332,6 +359,7 @@ export async function analyzeSentiment({ mint, lookbackDays = null }) {
   if (posts.length === 0) {
     const result = { mint, sentiment: "NEUTRAL", score: 0, post_count: 0, negative_count: 0, positive_count: 0, neutral_count: 0, summary: "No posts found from trusted accounts", posts: [] };
     _sentimentCache.set(mint, { result, fetchedAt: Date.now() });
+    logSentiment({ event: "analyze", mint, sentiment: "NEUTRAL", score: 0, post_count: 0, duration_ms: Date.now() - t0, from_cache: false });
     return result;
   }
 
@@ -384,6 +412,20 @@ export async function analyzeSentiment({ mint, lookbackDays = null }) {
   };
 
   _sentimentCache.set(mint, { result, fetchedAt: Date.now() });
+
+  logSentiment({
+    event: "analyze",
+    mint,
+    sentiment: result.sentiment,
+    score: result.score,
+    post_count: result.post_count,
+    positive: result.positive_count,
+    negative: result.negative_count,
+    neutral: result.neutral_count,
+    duration_ms: Date.now() - t0,
+    from_cache: false,
+  });
+
   return result;
 }
 
