@@ -495,13 +495,22 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
               ? parseFloat(binData.unrealizedPnl?.balancesSol || 0)
               : parseFloat(binData.unrealizedPnl?.balances || 0)
             : parseFloat(config.management.solMode ? (pool.balancesSol || 0) : (pool.balances || 0))) * 10000) / 10000,
+          // Always-USD fields for internal accounting and lesson recording.
+          total_value_true_usd: Math.round((binData
+            ? parseFloat(binData.unrealizedPnl?.balances || 0)
+            : parseFloat(pool.balances || 0)) * 10000) / 10000,
           collected_fees_usd: Math.round(parseFloat(config.management.solMode ? (binData?.allTimeFees?.total?.sol || 0) : (binData?.allTimeFees?.total?.usd || 0)) * 10000) / 10000,
+          collected_fees_true_usd: Math.round(parseFloat(binData?.allTimeFees?.total?.usd || 0) * 10000) / 10000,
           pnl_usd:            Math.round(parseFloat(binData
             ? config.management.solMode ? (binData.pnlSol || 0) : (binData.pnlUsd || 0)
             : config.management.solMode ? (pool.pnlSol || 0) : (pool.pnl || 0)) * 10000) / 10000,
+          pnl_true_usd:       Math.round(parseFloat(binData?.pnlUsd || 0) * 10000) / 10000,
           pnl_pct:            Math.round(parseFloat(binData
             ? config.management.solMode ? (binData.pnlSolPctChange || 0) : (binData.pnlPctChange || 0)
             : config.management.solMode ? (pool.pnlSolPctChange || 0) : (pool.pnlPctChange || 0)) * 100) / 100,
+          unclaimed_fees_true_usd: Math.round((binData
+            ? parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0)
+            : parseFloat(pool.unclaimedFees || 0)) * 10000) / 10000,
           fee_per_tvl_24h:    Math.round(parseFloat(binData?.feePerTvl24h || pool.feePerTvl24h || 0) * 100) / 100,
           age_minutes:        binData?.createdAt ? Math.floor((Date.now() - binData.createdAt * 1000) / 60000) : ageFromState,
           minutes_out_of_range: minutesOutOfRange(positionAddress),
@@ -661,8 +670,8 @@ export async function closePosition({ position_address, reason }) {
     const pool = await getPool(poolAddress);
 
     const positionPubKey = new PublicKey(position_address);
-
-    const txHashes = [];
+    const claimTxHashes = [];
+    const closeTxHashes = [];
 
     const tracked = getTrackedPosition(position_address);
 
@@ -681,9 +690,9 @@ export async function closePosition({ position_address, reason }) {
         if (claimTxs && claimTxs.length > 0) {
           for (const tx of claimTxs) {
             const claimHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
-            txHashes.push(claimHash);
+            claimTxHashes.push(claimHash);
           }
-          log("close", `Step 1 OK: ${txHashes.join(", ")}`);
+          log("close", `Step 1 OK (claim only): ${claimTxHashes.join(", ")}`);
         }
       }
     } catch (e) {
@@ -692,12 +701,16 @@ export async function closePosition({ position_address, reason }) {
 
     // ─── Step 2: Remove Liquidity & Close ──────────────────────
     let hasLiquidity = false;
+    let closeFromBinId = -887272;
+    let closeToBinId = 887272;
     try {
       const positionDataForClose = await pool.getPosition(positionPubKey);
-      const shares = positionDataForClose?.positionData?.liquidityShares;
-      if (Array.isArray(shares) && shares.length > 0) {
-        const totalLiquidity = shares.reduce((sum, share) => sum.add(share), new BN(0));
-        hasLiquidity = totalLiquidity.gt(new BN(0));
+      const processed = positionDataForClose?.positionData;
+      if (processed) {
+        closeFromBinId = processed.lowerBinId ?? closeFromBinId;
+        closeToBinId = processed.upperBinId ?? closeToBinId;
+        const bins = Array.isArray(processed.positionBinData) ? processed.positionBinData : [];
+        hasLiquidity = bins.some((bin) => new BN(bin.positionLiquidity || "0").gt(new BN(0)));
       }
     } catch (e) {
       log("close_warn", `Could not check liquidity state: ${e.message}`);
@@ -708,29 +721,61 @@ export async function closePosition({ position_address, reason }) {
       const closeTx = await pool.removeLiquidity({
         user: wallet.publicKey,
         position: positionPubKey,
-        fromBinId: -887272,
-        toBinId: 887272,
+        fromBinId: closeFromBinId,
+        toBinId: closeToBinId,
         bps: new BN(10000),
         shouldClaimAndClose: true,
       });
 
       for (const tx of Array.isArray(closeTx) ? closeTx : [closeTx]) {
         const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
-        txHashes.push(txHash);
+        closeTxHashes.push(txHash);
       }
     } else {
-      log("close", `Step 2: Position is empty, closing directly`);
-      const closeTx = await pool.closePositionIfEmpty({
+      log("close", `Step 2: No position liquidity detected, closing account`);
+      const closeTx = await pool.closePosition({
         owner: wallet.publicKey,
         position: { publicKey: positionPubKey },
       });
       const txHash = await sendAndConfirmTransaction(getConnection(), closeTx, [wallet]);
-      txHashes.push(txHash);
+      closeTxHashes.push(txHash);
     }
+    const txHashes = [...claimTxHashes, ...closeTxHashes];
+    log("close", `Step 2 OK (close only): ${closeTxHashes.join(", ") || "none"}`);
     log("close", `SUCCESS txs: ${txHashes.join(", ")}`);
     // Wait for RPC to reflect withdrawn balances before returning — prevents
     // agent from seeing zero balance when attempting post-close swap
     await new Promise(r => setTimeout(r, 5000));
+    _positionsCacheAt = 0;
+
+    let closedConfirmed = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const refreshed = await getMyPositions({ force: true, silent: true });
+        const stillOpen = refreshed?.positions?.some((p) => p.position === position_address);
+        if (!stillOpen) {
+          closedConfirmed = true;
+          break;
+        }
+        log("close_warn", `Position ${position_address} still appears open after close txs (attempt ${attempt + 1}/4)`);
+      } catch (e) {
+        log("close_warn", `Close verification failed (attempt ${attempt + 1}/4): ${e.message}`);
+      }
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    if (!closedConfirmed) {
+      return {
+        success: false,
+        error: "Close transactions sent but position still appears open after verification window",
+        position: position_address,
+        pool: poolAddress,
+        claim_txs: claimTxHashes,
+        close_txs: closeTxHashes,
+        txs: txHashes,
+      };
+    }
+
     recordClose(position_address, reason || "agent decision");
 
     // Record performance for learning
@@ -742,8 +787,6 @@ export async function closePosition({ position_address, reason }) {
       if (tracked.out_of_range_since) {
         minutesOOR = Math.floor((Date.now() - new Date(tracked.out_of_range_since).getTime()) / 60000);
       }
-
-      _positionsCacheAt = 0; // invalidate cache so next cycle re-fetches
 
       // Fetch closed PnL from API — authoritative source after withdrawal settles
       let pnlUsd = 0;
@@ -785,12 +828,19 @@ export async function closePosition({ position_address, reason }) {
       if (finalValueUsd === 0 || initialUsd <= 0) {
         const cachedPos = _positionsCache?.positions?.find(p => p.position === position_address);
         if (cachedPos) {
-          pnlUsd        = cachedPos.pnl_usd   ?? 0;
+          pnlUsd        = cachedPos.pnl_true_usd ?? cachedPos.pnl_usd ?? 0;
           pnlPct        = cachedPos.pnl_pct   ?? 0;
-          finalValueUsd = cachedPos.total_value_usd ?? 0;
-          feesUsd       = (cachedPos.collected_fees_usd || 0) + (cachedPos.unclaimed_fees_usd || 0);
-          initialUsd    = tracked.initial_value_usd || (finalValueUsd - pnlUsd) || 0;
-          log("close_warn", `Using pre-close cache snapshot as fallback`);
+          feesUsd       = (cachedPos.collected_fees_true_usd || 0) + (cachedPos.unclaimed_fees_true_usd || 0);
+          initialUsd    = tracked.initial_value_usd || 0;
+          if (initialUsd > 0) {
+            // Keep fallback internally consistent using USD-only cached metrics.
+            finalValueUsd = Math.max(0, initialUsd + pnlUsd - feesUsd);
+            pnlPct = (pnlUsd / initialUsd) * 100;
+          } else {
+            finalValueUsd = cachedPos.total_value_true_usd ?? cachedPos.total_value_usd ?? 0;
+            initialUsd = Math.max(0, finalValueUsd + feesUsd - pnlUsd);
+          }
+          log("close_warn", `Using cached pnl fallback because closed API has not settled yet`);
         }
       }
 
@@ -814,10 +864,30 @@ export async function closePosition({ position_address, reason }) {
         close_reason: reason || "agent decision",
       });
 
-      return { success: true, position: position_address, pool: poolAddress, pool_name: tracked.pool_name || null, txs: txHashes, pnl_usd: pnlUsd, pnl_pct: pnlPct, base_mint: pool.lbPair.tokenXMint.toString() };
+      return {
+        success: true,
+        position: position_address,
+        pool: poolAddress,
+        pool_name: tracked.pool_name || null,
+        claim_txs: claimTxHashes,
+        close_txs: closeTxHashes,
+        txs: txHashes,
+        pnl_usd: pnlUsd,
+        pnl_pct: pnlPct,
+        base_mint: pool.lbPair.tokenXMint.toString(),
+      };
     }
 
-    return { success: true, position: position_address, pool: poolAddress, pool_name: null, txs: txHashes, base_mint: pool.lbPair.tokenXMint.toString() };
+    return {
+      success: true,
+      position: position_address,
+      pool: poolAddress,
+      pool_name: null,
+      claim_txs: claimTxHashes,
+      close_txs: closeTxHashes,
+      txs: txHashes,
+      base_mint: pool.lbPair.tokenXMint.toString(),
+    };
   } catch (error) {
     log("close_error", error.message);
     return { success: false, error: error.message };
