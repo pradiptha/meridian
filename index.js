@@ -19,6 +19,8 @@ import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memor
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { analyzeSentiment, checkCookieHealth, isCookieExpired } from "./tools/x.js";
+import { stageSignals } from "./signal-tracker.js";
+import { getWeightsSummary } from "./signal-weights.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -399,7 +401,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       await new Promise(r => setTimeout(r, 150)); // avoid 429s
     }
 
-    // Only filter blocked launchpads — everything else is for the LLM to judge
+    // Hard filters after token recon — block launchpads, excessive Jupiter bot holders, and negative X sentiment
     const passing = allCandidates.filter(({ pool, ti, xs }) => {
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
@@ -409,6 +411,13 @@ export async function runScreeningCycle({ silent = false } = {}) {
       // X sentiment hard filter
       if (config.xSentiment.enabled && xs?.score != null && xs.score < config.xSentiment.minSentimentScore) {
         log("screening", `Skipping ${pool.name} — negative X sentiment (${xs.score})`);
+        return false;
+      }
+      // Jupiter bot holders hard filter
+      const botPct = ti?.audit?.bot_holders_pct;
+      const maxBotHoldersPct = config.screening.maxBotHoldersPct;
+      if (botPct != null && maxBotHoldersPct != null && botPct > maxBotHoldersPct) {
+        log("screening", `Bot-holder filter: dropped ${pool.name} — bots ${botPct}% > ${maxBotHoldersPct}%`);
         return false;
       }
       return true;
@@ -441,6 +450,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
         pool.sniper_pct     != null ? `sniper=${pool.sniper_pct}%`            : null,
         pool.suspicious_pct != null ? `suspicious=${pool.suspicious_pct}%`    : null,
         pool.new_wallet_pct != null ? `new_wallets=${pool.new_wallet_pct}%`   : null,
+        pool.is_rugpull != null ? `rugpull=${pool.is_rugpull ? "YES" : "NO"}` : null,
+        pool.is_wash != null ? `wash=${pool.is_wash ? "YES" : "NO"}` : null,
       ].filter(Boolean).join(", ");
 
       const okxTags = [
@@ -451,7 +462,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         pool.dev_sold_all       ? "dev_sold_all(bullish)" : null,
       ].filter(Boolean).join(", ");
 
-      return [
+      const block = [
         `POOL: ${pool.name} (${pool.pool})`,
         `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
@@ -465,7 +476,25 @@ export async function runScreeningCycle({ silent = false } = {}) {
         xs && xs.sentiment !== "DISABLED" && xs.sentiment !== "COOKIE_EXPIRED" && xs.sentiment !== "NO_ACCOUNTS" ? `  x_sentiment: ${xs.sentiment} (${xs.score}) | ${xs.post_count} posts (${xs.positive_count} pos, ${xs.negative_count} neg)${xs.posts?.length ? "\n" + xs.posts.map(p => `    [${p.score}] @${p.author.replace("@","")}: ${p.text}`).join("\n") : ""}` : null,
         mem ? `  memory: ${mem}` : null,
       ].filter(Boolean).join("\n");
+
+      // Stage signals for Darwinian weighting — captured before LLM decides
+      if (config.darwin?.enabled) {
+        stageSignals(pool.pool, {
+          organic_score:         pool.organic_score         ?? null,
+          fee_tvl_ratio:         pool.fee_active_tvl_ratio  ?? null,
+          volume:                pool.volume_window         ?? null,
+          mcap:                  pool.mcap                  ?? null,
+          holder_count:          ti?.holders                ?? null,
+          smart_wallets_present: (sw?.in_pool?.length ?? 0) > 0,
+          narrative_quality:     n?.narrative ? "present" : "absent",
+          volatility:            pool.volatility            ?? null,
+        });
+      }
+
+      return block;
     });
+
+    const weightsSummary = config.darwin?.enabled ? getWeightsSummary() : null;
 
     const { content } = await agentLoop(`
 SCREENING CYCLE
@@ -480,13 +509,22 @@ STEPS:
 2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    bins_below = round(35 + (volatility/4)*55) clamped to [35,90].
 3. Report in this exact format (no tables, no extra sections):
-   Deployed: PAIR
-   bin_step=X | fee=X% | bots=X% | top10=X% | fees=XSOL
-   range=minPrice→maxPrice (downside=(minPrice/maxPrice-1)*100%)
-   smart_wallets=name1,name2 (or none)
-   narrative: <one sentence>
-   reason: <one sentence why picked over others>
-   sentiment: <one sentence>
+   Decision: DEPLOYED PAIR
+   pool: <name> | <pool address>
+   amount: <deploy amount> SOL | strategy=<strategy> | active_bin=<bin>
+   metrics: bin_step=X | fee=X% | fee_tvl=X% | volume=$X | tvl=$X | volatility=X | organic=X | mcap=$X
+   holder_audit: top10=X% | bots=X% | fees=XSOL | token_age=Xh
+   smart_wallets: <names or none>
+   range: minPrice→maxPrice (downside=(minPrice/maxPrice-1)*100%)
+   narrative: <1-2 sentences on what the token/pool is and why it has attention>
+   analysis: <2-4 sentences covering why this setup is attractive right now, key risks, and what outweighed the alternatives>
+   sentiment: <one sentence on X sentiment>
+   reason: <one decisive sentence explaining why this pool won over the rest>
+   rejected: <one short sentence on why the next best alternatives were passed over>
+4. If no pool qualifies, report in this exact format instead:
+   Decision: NO DEPLOY
+   analysis: <2-4 sentences explaining why current candidates were rejected>
+   rejected: <short semicolon-separated reasons for the top candidates that were skipped>
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 4096);
     screenReport = content;
   } catch (error) {

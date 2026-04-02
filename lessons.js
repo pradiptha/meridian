@@ -121,6 +121,15 @@ export async function recordPerformance(perf) {
     log("evolve", `Not evolved now. perf length: ${data.performance.length}. mod: ${data.performance.length % MIN_EVOLVE_POSITIONS}`)
   }
 
+  // Darwinian signal weight recalculation
+  if (config.darwin?.enabled) {
+    const { recalculateWeights } = await import("./signal-weights.js");
+    const wResult = recalculateWeights(data.performance, config);
+    if (wResult.changes.length > 0) {
+      log("evolve", `Darwin: adjusted ${wResult.changes.length} signal weight(s)`);
+    }
+  }
+
 }
 
 /**

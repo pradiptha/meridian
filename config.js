@@ -107,6 +107,18 @@ export const config = {
     lookbackDays:       u.xLookbackDays       ?? 7,
   },
 
+  // ─── Darwinian Signal Weighting ───────
+  darwin: {
+    enabled:        u.darwinEnabled     ?? true,
+    windowDays:     u.darwinWindowDays  ?? 60,
+    recalcEvery:    u.darwinRecalcEvery ?? 5,    // recalc every N closes
+    boostFactor:    u.darwinBoost       ?? 1.05,
+    decayFactor:    u.darwinDecay       ?? 0.95,
+    weightFloor:    u.darwinFloor       ?? 0.3,
+    weightCeiling:  u.darwinCeiling     ?? 2.5,
+    minSamples:     u.darwinMinSamples  ?? 10,
+  },
+
   // ─── Common Token Mints ────────────────
   tokens: {
     SOL:  "So11111111111111111111111111111111111111112",

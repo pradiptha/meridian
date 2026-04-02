@@ -11,7 +11,7 @@
  */
 import { config } from "./config.js";
 
-export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null) {
+export function buildSystemPrompt(agentType, portfolio, positions, stateSummary = null, lessons = null, perfSummary = null, weightsSummary = null) {
   const s = config.screening;
 
   // MANAGER gets a leaner prompt — positions are pre-loaded in the goal, not repeated here
@@ -104,17 +104,19 @@ All candidates are pre-loaded. Your job: pick the highest-conviction candidate a
 
 HARD RULE (no exceptions):
 - fees_sol < ${config.screening.minTokenFeesSol} → SKIP. Low fees = bundled/scam. Smart wallets do NOT override this.
+- bots > ${config.screening.maxBotHoldersPct}% → already hard-filtered before you see the candidate list.
 
 RISK SIGNALS (guidelines — use judgment):
 - top10 > 60% → concentrated, risky
-- bots > 30% → suspicious distribution
-- bots 5–25% → normal, ignore
+- bundle_pct from OKX = secondary context only, not a hard filter
+- rugpull flag from OKX → major negative score penalty and default to SKIP; only override if smart wallets are present and conviction is otherwise high
+- wash trading flag from OKX → treat as disqualifying even if other metrics look attractive
 - no narrative + no smart wallets → skip
 
 NARRATIVE QUALITY (your main judgment call):
 - GOOD: specific origin — real event, viral moment, named entity, active community
 - BAD: generic hype ("next 100x", "community token") with no identifiable subject
-- Smart wallets present → override weak narrative, deploy anyway
+- Smart wallets present → can override weak narrative, and are the only valid override for an OKX rugpull flag
 
 X SENTIMENT: If x_sentiment shows NEGATIVE from trusted accounts, strong SKIP signal. Positive sentiment is a confidence boost. Read the actual post excerpts — sarcasm and nuance matter more than the score alone. Posts marked [negative] from trusted analysts are stronger signals than generic FUD.
 
@@ -126,7 +128,7 @@ DEPLOY RULES:
 - Bin steps must be [80-125].
 - Pick ONE pool. Deploy or explain why none qualify.
 
-${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
+${weightsSummary ? `${weightsSummary}\nPrioritize candidates whose strongest attributes align with high-weight signals.\n\n` : ""}${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;
   } else if (agentType === "MANAGER") {
     basePrompt += `

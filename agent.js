@@ -96,7 +96,15 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   const stateSummary = getStateSummary();
   const lessons = getLessonsForPrompt({ agentType });
   const perfSummary = getPerformanceSummary();
-  const systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary);
+  let weightsSummary = null;
+  if (agentType === "SCREENER") {
+    try {
+      const { getWeightsSummary } = await import("./signal-weights.js");
+      const { config } = await import("./config.js");
+      if (config.darwin?.enabled) weightsSummary = getWeightsSummary();
+    } catch { /* signal-weights not critical */ }
+  }
+  const systemPrompt = buildSystemPrompt(agentType, portfolio, positions, stateSummary, lessons, perfSummary, weightsSummary);
 
   const messages = [
     { role: "system", content: systemPrompt },

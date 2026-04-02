@@ -134,17 +134,17 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
   // Enrich with OKX data — advanced info (risk/bundle/sniper) + ATH price (no API key required)
   if (eligible.length > 0) {
-    const { getAdvancedInfo, getPriceInfo, getClusterList } = await import("./okx.js");
+    const { getAdvancedInfo, getPriceInfo, getClusterList, getRiskFlags } = await import("./okx.js");
     const okxResults = await Promise.allSettled(
       eligible.map((p) => p.base?.mint
-        ? Promise.all([getAdvancedInfo(p.base.mint), getPriceInfo(p.base.mint), getClusterList(p.base.mint)])
-        : Promise.resolve([null, null, []])
+        ? Promise.all([getAdvancedInfo(p.base.mint), getPriceInfo(p.base.mint), getClusterList(p.base.mint), getRiskFlags(p.base.mint)])
+        : Promise.resolve([null, null, [], null])
       )
     );
     for (let i = 0; i < eligible.length; i++) {
       const r = okxResults[i];
       if (r.status !== "fulfilled") continue;
-      const [adv, price, clusters] = r.value;
+      const [adv, price, clusters, risk] = r.value;
       if (adv) {
         eligible[i].risk_level      = adv.risk_level;
         eligible[i].bundle_pct      = adv.bundle_pct;
@@ -155,6 +155,10 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         eligible[i].dex_boost       = adv.dex_boost;
         eligible[i].dex_screener_paid = adv.dex_screener_paid;
         if (adv.creator && !eligible[i].dev) eligible[i].dev = adv.creator;
+      }
+      if (risk) {
+        eligible[i].is_rugpull = risk.is_rugpull;
+        eligible[i].is_wash    = risk.is_wash;
       }
       if (price) {
         eligible[i].price_vs_ath_pct = price.price_vs_ath_pct;
@@ -167,17 +171,11 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         eligible[i].top_cluster_hold_pct = clusters[0]?.holding_pct ?? null;
       }
     }
-    // Bundle filter — drop pools where OKX bundle % exceeds threshold
-    const maxBundle = config.screening.maxBundlePct;
-    if (maxBundle != null) {
-      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
-        if (p.bundle_pct != null && p.bundle_pct > maxBundle) {
-          log("screening", `Bundle filter: dropped ${p.name} — bundle ${p.bundle_pct}% > ${maxBundle}%`);
-          return false;
-        }
-        return true;
-      }));
-    }
+    // Wash trading hard filter — fake volume = misleading fee yield
+    eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+      if (p.is_wash) { log("screening", `Risk filter: dropped ${p.name} — wash trading flagged`); return false; }
+      return true;
+    }));
 
     // ATH filter — drop pools where price is too close to ATH
     const athFilter = config.screening.athFilterPct;
