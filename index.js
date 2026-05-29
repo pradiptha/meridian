@@ -1,3 +1,6 @@
+import "dotenv/config";
+import net from "node:net";
+net.setDefaultAutoSelectFamily(false);
 import "./envcrypt.js";
 import cron from "node-cron";
 import readline from "readline";
@@ -6,7 +9,7 @@ import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
-import { getWalletBalances } from "./tools/wallet.js";
+import { getWalletBalances, swapToken } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { formatGmgnCandidateForPrompt } from "./tools/gmgn.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
@@ -41,6 +44,12 @@ const isMain = entrypointPath
   ? path.resolve(entrypointPath) === fileURLToPath(import.meta.url)
   : false;
 
+// ═══════════════════════════════════════════
+//  WALLET SWEEP CONFIG
+// ═══════════════════════════════════════════
+const SWEEP_THRESHOLD_USD = 0.10; // $0.10 minimum to trigger sweep
+const SWEEP_INTERVAL_MS = 30 * 60_000; // check every 5 minutes
+
 if (isMain) {
   log("startup", "DLMM LP Agent starting...");
   log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -48,6 +57,7 @@ if (isMain) {
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
+  scheduleWalletSweep();
 }
 
 const TP_PCT = config.management.takeProfitPct;
@@ -114,6 +124,86 @@ function sanitizeUntrustedPromptText(text, maxLen = 500) {
 
 function shouldUsePnlRecheck() {
   return !config.api.lpAgentRelayEnabled;
+}
+
+// ─── Wallet Sweep ──────────────────────────────────────────────
+// Safety net: any token sitting in wallet above threshold (and not in an active position)
+// gets swapped back to SOL automatically.
+
+let _sweepBusy = false;
+
+async function runWalletSweep() {
+  if (_sweepBusy || process.env.DRY_RUN === "true") return;
+  _sweepBusy = true;
+  try {
+    const balances = await getWalletBalances();
+    if (balances.error || !balances.tokens?.length) {
+      log("sweep", `No tokens to sweep (error: ${balances.error || 'none'})`);
+      _sweepBusy = false;
+      return;
+    }
+
+    log("sweep", `Checking ${balances.tokens.length} tokens for sweep...`);
+
+    // Get active position base mints to exclude
+    const activeMints = new Set();
+    try {
+      const positions = await getMyPositions({ force: true, silent: true });
+      for (const p of positions?.positions || []) {
+        if (p.base_mint) activeMints.add(p.base_mint);
+        if (p.quote_mint) activeMints.add(p.quote_mint);
+      }
+      log("sweep", `Excluding ${activeMints.size} active position mints`);
+    } catch {
+      // If we can't get positions, skip sweep to be safe
+      _sweepBusy = false;
+      return;
+    }
+
+    for (const token of balances.tokens) {
+      // Skip SOL (any format), USDC, and tokens in active positions
+      const isSol = token.mint === "So11111111111111111111111111111111111111112" ||
+                    token.symbol === "SOL" ||
+                    token.symbol === "wsol" ||
+                    token.symbol === "SOL (Native)";
+      if (
+        isSol ||
+        token.mint === config.tokens.USDC ||
+        activeMints.has(token.mint)
+      ) {
+        continue;
+      }
+
+      // Skip tokens below threshold
+      if (!token.usd || token.usd < SWEEP_THRESHOLD_USD) continue;
+
+      log("sweep", `Found ${token.symbol} (${token.mint.slice(0, 8)}) = $${token.usd.toFixed(2)} — sweeping to SOL`);
+
+      const swapResult = await swapToken({
+        input_mint: token.mint,
+        output_mint: "So11111111111111111111111111111111111111112",
+        amount: token.balance,
+      });
+
+      if (swapResult.success) {
+        log("sweep", `Sweep SUCCESS: ${token.symbol} → SOL (tx: ${swapResult.tx})`);
+        if (telegramEnabled()) {
+          sendMessage(`🧹 Wallet sweep: ${token.symbol} ($${token.usd.toFixed(2)}) → SOL\nTx: ${swapResult.tx}`).catch(() => {});
+        }
+      } else {
+        log("sweep_warn", `Sweep failed for ${token.symbol}: ${swapResult.error}`);
+      }
+    }
+  } catch (error) {
+    log("sweep_error", `Wallet sweep error: ${error.message}`);
+  } finally {
+    _sweepBusy = false;
+  }
+}
+
+function scheduleWalletSweep() {
+  setInterval(runWalletSweep, SWEEP_INTERVAL_MS);
+  log("cron", `Wallet sweep scheduled every ${SWEEP_INTERVAL_MS / 60000}min (threshold: $${SWEEP_THRESHOLD_USD})`);
 }
 
 function schedulePeakConfirmation(positionAddress) {
@@ -659,8 +749,8 @@ STEPS:
 2. Pick the best candidate only if it has real conviction from narrative quality, smart wallets, and pool metrics. If the list has only one pool and it lacks narrative or smart-wallet confirmation, skip the cycle.
 3. If a pool qualifies, call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    strategy = ${config.strategy.strategy} (always use this, never change it).
-   bins_below = round(${config.strategy.minBinsBelow} + (candidate volatility/5)*${config.strategy.maxBinsBelow - config.strategy.minBinsBelow}) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}].
-   pass deploy_position.volatility = the candidate volatility value.
+bins_below = round(${config.strategy.minBinsBelow} + (volatility/4)*${config.strategy.maxBinsBelow - config.strategy.minBinsBelow}) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}].
+    pass deploy_position.volatility = the candidate volatility value.
    bins_above = 0. Single-side SOL only: set amount_y, keep amount_x = 0.
 4. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED

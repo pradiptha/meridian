@@ -25,7 +25,7 @@ import {
 } from "../state.js";
 import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
-import { normalizeMint } from "./wallet.js";
+import { normalizeMint, swapToken } from "./wallet.js";
 import { appendDecision } from "../decision-log.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
 
@@ -1827,6 +1827,8 @@ export async function closePosition({ position_address, reason }) {
             pnl_usd: pnlUsd,
             pnl_pct: pnlPct,
             base_mint: closeBaseMint,
+            auto_swapped: true,
+            auto_swap_tx: closeTxHashes[0] || null,
           };
         }
 
@@ -1852,10 +1854,12 @@ export async function closePosition({ position_address, reason }) {
           close_txs: closeTxHashes,
           txs: txHashes,
           base_mint: livePosition?.base_mint || null,
+          auto_swapped: true,
+          auto_swap_tx: closeTxHashes[0] || null,
         };
       } catch (relayError) {
         if (relaySubmitted) throw relayError;
-        log("close_warn", `Relay zap-out failed before submit; falling back to local close + Jupiter autoswap: ${relayError.message}`);
+        log("close_warn", `Relay zap-out failed before submit; falling back to local close: ${relayError.message}`);
       }
     }
 
@@ -1969,6 +1973,12 @@ export async function closePosition({ position_address, reason }) {
     }
 
     recordClose(position_address, reason || "agent decision");
+
+    // Auto-swap base token back to SOL (inline, not via executor)
+    const swapResult = await autoSwapAfterClose(pool.lbPair.tokenXMint.toString());
+    const autoSwapped = swapResult.swapped;
+    const autoSwapTx = swapResult.tx || null;
+    const solReceived = swapResult.amount_out || null;
 
     // Record performance for learning
     if (tracked) {
@@ -2101,7 +2111,7 @@ export async function closePosition({ position_address, reason }) {
         },
       });
 
-      return {
+return {
         success: true,
         position: position_address,
         pool: poolAddress,
@@ -2112,6 +2122,10 @@ export async function closePosition({ position_address, reason }) {
         pnl_usd: pnlUsd,
         pnl_pct: pnlPct,
         base_mint: closeBaseMint,
+        auto_swapped: autoSwapped,
+        auto_swap_tx: autoSwapTx,
+        auto_swap_failed: !autoSwapped && (swapResult.reason === "swap_failed" || swapResult.reason === "error"),
+        sol_received: solReceived,
       };
     }
 
@@ -2135,10 +2149,80 @@ export async function closePosition({ position_address, reason }) {
       close_txs: closeTxHashes,
       txs: txHashes,
       base_mint: pool.lbPair.tokenXMint.toString(),
+      auto_swapped: autoSwapped,
+      auto_swap_tx: autoSwapTx,
+      auto_swap_failed: !autoSwapped && (swapResult.reason === "swap_failed" || swapResult.reason === "error"),
+      sol_received: solReceived,
     };
   } catch (error) {
     log("close_error", error.message);
     return { success: false, error: error.message };
+  }
+}
+
+// ─── Auto-swap helper ──────────────────────────────────────────
+async function autoSwapAfterClose(baseMint, minUsdValue = 0.10, maxRetries = 3) {
+  try {
+    const connection = getConnection();
+    const wallet = getWallet();
+
+    let tokenBalance = 0;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, {
+          mint: new PublicKey(baseMint),
+        });
+
+        if (tokenAccounts.value && tokenAccounts.value.length > 0) {
+          tokenBalance = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount;
+        }
+
+        if (tokenBalance > 0) break;
+
+        if (attempt < 3) {
+          log("close", `Balance check attempt ${attempt}/3: ${tokenBalance} — waiting for RPC sync`);
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      } catch (e) {
+        log("close_warn", `Balance check attempt ${attempt}/3 failed: ${e.message}`);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+
+    if (tokenBalance < 0.000001) {
+      log("close", `Auto-swap skipped: zero balance for ${baseMint.slice(0, 8)}`);
+      return { swapped: false, reason: "zero_balance" };
+    }
+
+    log("close", `Auto-swapping ${tokenBalance.toFixed(4)} of ${baseMint.slice(0, 8)} to SOL`);
+
+    let lastError;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const swapResult = await swapToken({
+          input_mint: baseMint,
+          output_mint: "SOL",
+          amount: tokenBalance,
+        });
+
+        if (swapResult.success) {
+          log("close", `Auto-swap SUCCESS: ${swapResult.tx}`);
+          return { swapped: true, tx: swapResult.tx, amount_out: swapResult.amount_out };
+        } else {
+          lastError = new Error(swapResult.error || "Swap returned failure");
+        }
+      } catch (e) {
+        lastError = e;
+        log("close_warn", `Swap attempt ${attempt}/${maxRetries} failed: ${e.message}`);
+        if (attempt < maxRetries) await new Promise((r) => setTimeout(r, attempt * 3000));
+      }
+    }
+
+    log("close_warn", `Auto-swap failed after ${maxRetries} attempts: ${lastError?.message}`);
+    return { swapped: false, reason: "swap_failed", error: lastError?.message };
+  } catch (error) {
+    log("close_error", `Auto-swap error: ${error.message}`);
+    return { swapped: false, reason: "error", error: error.message };
   }
 }
 
