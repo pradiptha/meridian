@@ -34,7 +34,7 @@ export function addStrategy({
   id,
   name,
   author = "unknown",
-  lp_strategy = "bid_ask",       // "bid_ask" | "spot" | "curve"
+  lp_strategy = "bid_ask",       // "bid_ask" | "spot" | "mixed" | "curve"
   token_criteria = {},           // { min_mcap, min_age_days, requires_kol, notes }
   entry = {},                    // { condition, price_change_threshold_pct, single_side }
   range = {},                    // { type, bins_below_pct, notes }

@@ -58,6 +58,7 @@ export function trackPosition({
   pool,
   pool_name,
   strategy,
+  deploy_layers = null,
   bin_range = {},
   amount_sol,
   amount_x = 0,
@@ -68,6 +69,7 @@ export function trackPosition({
   organic_score,
   initial_value_usd,
   signal_snapshot = null,
+  screening_criteria_at_deploy = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -75,6 +77,7 @@ export function trackPosition({
     pool,
     pool_name,
     strategy,
+    deploy_layers: Array.isArray(deploy_layers) ? deploy_layers : null,
     bin_range,
     amount_sol,
     amount_x,
@@ -86,6 +89,8 @@ export function trackPosition({
     organic_score,
     initial_value_usd,
     signal_snapshot: signal_snapshot || null,
+    screening_criteria_at_deploy: screening_criteria_at_deploy || null,
+    screening_criteria_at_close: null,
     deployed_at: new Date().toISOString(),
     out_of_range_since: null,
     last_claim_at: null,
@@ -177,13 +182,14 @@ function pushEvent(state, event) {
 /**
  * Mark a position as closed.
  */
-export function recordClose(position_address, reason) {
+export function recordClose(position_address, reason, screening_criteria_at_close = null) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
   pos.closed = true;
   pos.closed_at = new Date().toISOString();
   pos.notes.push(`Closed at ${pos.closed_at}: ${reason}`);
+  pos.screening_criteria_at_close = screening_criteria_at_close || null;
   pushEvent(state, { action: "close", position: position_address, pool_name: pos.pool_name || pos.pool, reason });
   save(state);
   log("state", `Position ${position_address} marked closed: ${reason}`);

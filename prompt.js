@@ -132,6 +132,7 @@ POOL MEMORY: Past losses or problems → strong skip signal.
 DEPLOY RULES:
 - COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
 - strategy = ${config.strategy.strategy} — always use this exact value, never change it.
+- If strategy is mixed, it means 30% Spot first, then 70% BidAsk into the same position.
 bins_below = round(${config.strategy.minBinsBelow} + (volatility/4)*${config.strategy.maxBinsBelow - config.strategy.minBinsBelow}) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}]. bins_above = 0.
 - Bin steps must be [${config.screening.minBinStep}-${config.screening.maxBinStep}].
 - Pick ONE pool only if it qualifies. Otherwise explain why none qualify.

@@ -69,6 +69,12 @@ function buildSignalSnapshot(perf) {
   return Object.values(snapshot).some((value) => value != null) ? snapshot : null;
 }
 
+function buildCriteriaSnapshot(perf) {
+  const snapshot = perf.screening_criteria_snapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  return snapshot;
+}
+
 // ─── Record Position Performance ──────────────────────────────
 
 /**
@@ -133,9 +139,11 @@ export async function recordPerformance(perf) {
   }
 
   const signalSnapshot = buildSignalSnapshot(perf);
+  const criteriaSnapshot = buildCriteriaSnapshot(perf);
   const entry = {
     ...perf,
     signal_snapshot: signalSnapshot,
+    screening_criteria_snapshot: criteriaSnapshot,
     pnl_usd: Math.round(pnl_usd * 100) / 100,
     pnl_pct: Math.round(pnl_pct * 100) / 100,
     range_efficiency: Math.round(range_efficiency * 10) / 10,

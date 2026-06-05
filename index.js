@@ -54,6 +54,10 @@ if (isMain) {
   log("startup", "DLMM LP Agent starting...");
   log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
   log("startup", `Model: ${process.env.LLM_MODEL || "hermes-3-405b"}`);
+  log(
+    "startup",
+    `Resolved default strategy: ${config.strategy.strategy} | binsBelow=${config.strategy.defaultBinsBelow} | range=[${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}]`,
+  );
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
@@ -749,6 +753,7 @@ STEPS:
 2. Pick the best candidate only if it has real conviction from narrative quality, smart wallets, and pool metrics. If the list has only one pool and it lacks narrative or smart-wallet confirmation, skip the cycle.
 3. If a pool qualifies, call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    strategy = ${config.strategy.strategy} (always use this, never change it).
+   If strategy is mixed, it means 30% Spot first, then 70% BidAsk into the same position.
 bins_below = round(${config.strategy.minBinsBelow} + (volatility/4)*${config.strategy.maxBinsBelow - config.strategy.minBinsBelow}) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}].
     pass deploy_position.volatility = the candidate volatility value.
    bins_above = 0. Single-side SOL only: set amount_y, keep amount_x = 0.
@@ -1364,6 +1369,7 @@ function renderSettingsMenu(page = "main") {
       [
         settingButton("spot", "cfg:set:strategy:spot"),
         settingButton("bid_ask", "cfg:set:strategy:bid_ask"),
+        settingButton("mixed", "cfg:set:strategy:mixed"),
       ],
       inputButton("minBinsBelow", "Min bins"),
       inputButton("maxBinsBelow", "Max bins"),
@@ -2041,6 +2047,7 @@ if (isMain && isTTY) {
 
     console.log(`Wallet:    ${wallet.sol} SOL  ($${wallet.sol_usd})  |  SOL price: $${wallet.sol_price}`);
     console.log(`Positions: ${positions.total_positions} open\n`);
+    console.log(`Resolved strategy: ${config.strategy.strategy} | binsBelow: ${config.strategy.defaultBinsBelow} | range: [${config.strategy.minBinsBelow}, ${config.strategy.maxBinsBelow}]\n`);
 
     if (positions.total_positions > 0) {
       console.log("Open positions:");

@@ -249,6 +249,7 @@ const FIELD_SECTIONS = [
       { key: "strategy", label: "Default LP strategy", type: "choice", choices: [
         { key: "bid_ask", label: "bid_ask" },
         { key: "spot", label: "spot" },
+        { key: "mixed", label: "mixed" },
         { key: "curve", label: "curve" },
       ]},
       { key: "minBinsBelow", label: "Min bins below active price", type: "number", min: 35 },

@@ -28,6 +28,7 @@ import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { normalizeMint, swapToken } from "./wallet.js";
 import { appendDecision } from "../decision-log.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
+import { appendScreeningCriteriaEvent, captureEnrichedScreeningCriteriaSnapshot } from "../screening-criteria.js";
 
 // ─── Lazy SDK loader ───────────────────────────────────────────
 // @meteora-ag/dlmm → @coral-xyz/anchor uses CJS directory imports
@@ -560,6 +561,55 @@ export async function getActiveBin({ pool_address }) {
 }
 
 // ─── Deploy Position ───────────────────────────────────────────
+const MIXED_DEPLOY_LAYERS = Object.freeze([
+  { strategy: "spot", pct: 30 },
+  { strategy: "bid_ask", pct: 70 },
+]);
+
+function getDeployLayers(activeStrategy, strategyMap) {
+  if (activeStrategy === "mixed") {
+    return MIXED_DEPLOY_LAYERS.map((layer, index) => ({
+      ...layer,
+      order: index + 1,
+      strategyType: strategyMap[layer.strategy],
+    }));
+  }
+  return [{
+    strategy: activeStrategy,
+    pct: 100,
+    order: 1,
+    strategyType: strategyMap[activeStrategy],
+  }];
+}
+
+function splitLamportsByLayers(totalYLamports, deployLayers) {
+  if (!BN.isBN(totalYLamports)) {
+    throw new Error("totalYLamports must be a BN.");
+  }
+  if (!Array.isArray(deployLayers) || deployLayers.length === 0) {
+    throw new Error("deployLayers must be a non-empty array.");
+  }
+
+  const totalPct = deployLayers.reduce((sum, layer) => sum + Number(layer.pct || 0), 0);
+  if (!Number.isFinite(totalPct) || totalPct <= 0) {
+    throw new Error("deployLayers must have a positive percentage total.");
+  }
+
+  let allocated = new BN(0);
+  return deployLayers.map((layer, index) => {
+    const pct = Number(layer.pct || 0);
+    const amountY = index === deployLayers.length - 1
+      ? totalYLamports.sub(allocated)
+      : totalYLamports.mul(new BN(Math.round(pct * 100))).div(new BN(Math.round(totalPct * 100)));
+    allocated = allocated.add(amountY);
+    return {
+      ...layer,
+      amountY,
+      amountYDecimal: Number(amountY.toString()) / 1e9,
+    };
+  });
+}
+
 export async function deployPosition({
   pool_address,
   amount_sol, // legacy: will be used as amount_y if amount_y is not provided
@@ -675,12 +725,21 @@ export async function deployPosition({
     spot: StrategyType.Spot,
     curve: StrategyType.Curve,
     bid_ask: StrategyType.BidAsk,
+    mixed: null,
   };
 
-  const strategyType = strategyMap[activeStrategy];
-  if (strategyType === undefined) {
-    throw new Error(`Invalid strategy: ${activeStrategy}. Use spot, curve, or bid_ask.`);
+  if (!(activeStrategy in strategyMap)) {
+    throw new Error(`Invalid strategy: ${activeStrategy}. Use spot, curve, bid_ask, or mixed.`);
   }
+
+  const dryRunLayers = splitLamportsByLayers(
+    new BN(Math.floor(finalAmountY * 1e9)),
+    getDeployLayers(activeStrategy, strategyMap),
+  ).map((layer) => ({
+    strategy: layer.strategy,
+    pct: layer.pct,
+    amount_y: layer.amountYDecimal,
+  }));
 
   if (process.env.DRY_RUN === "true") {
     return {
@@ -695,6 +754,7 @@ export async function deployPosition({
         amount_x: finalAmountX,
         amount_y: finalAmountY,
         wide_range: totalBins > 69,
+        layers: dryRunLayers,
       },
       message: "DRY RUN — no transaction sent",
     };
@@ -734,8 +794,88 @@ export async function deployPosition({
     const decimals = mintInfo.value?.data?.parsed?.info?.decimals ?? 9;
     totalXLamports = new BN(Math.floor(finalAmountX * Math.pow(10, decimals)));
   }
+  const deployLayers = splitLamportsByLayers(totalYLamports, getDeployLayers(activeStrategy, strategyMap));
+  if (deployLayers.some((layer) => layer.strategyType === undefined)) {
+    throw new Error(`Invalid strategy layer configuration for ${activeStrategy}.`);
+  }
+  const deployLayerSummary = deployLayers.map((layer) => ({
+    strategy: layer.strategy,
+    pct: layer.pct,
+    amount_y: layer.amountYDecimal,
+  }));
+  const strategyType = deployLayers[0]?.strategyType;
 
-  if (shouldUseLpAgentRelayForDeploy()) {
+  const trackDeploy = async ({ positionAddress, signalSnapshot }) => {
+    const deployCriteriaSnapshot = await captureEnrichedScreeningCriteriaSnapshot({
+      phase: "deploy",
+      poolAddress: pool_address,
+      baseMint,
+      fallbackPoolMetrics: {
+        bin_step,
+        volatility: normalizedVolatility,
+        fee_tvl_ratio,
+        organic_score,
+      },
+    });
+    appendScreeningCriteriaEvent({
+      event: "deploy",
+      position: positionAddress,
+      pool: pool_address,
+      pool_name,
+      base_mint: baseMint,
+      snapshot: deployCriteriaSnapshot,
+    });
+    trackPosition({
+      position: positionAddress,
+      pool: pool_address,
+      pool_name,
+      strategy: activeStrategy,
+      deploy_layers: deployLayerSummary,
+      bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
+      bin_step,
+      volatility: normalizedVolatility,
+      fee_tvl_ratio,
+      organic_score,
+      amount_sol: finalAmountY,
+      amount_x: finalAmountX,
+      active_bin: activeBin.binId,
+      initial_value_usd,
+      signal_snapshot: signalSnapshot,
+      screening_criteria_at_deploy: deployCriteriaSnapshot,
+    });
+  };
+
+  const appendDeployDecision = (positionAddress, summaryPrefix) => {
+    appendDecision({
+      type: "deploy",
+      actor: "SCREENER",
+      pool: pool_address,
+      pool_name,
+      position: positionAddress,
+      summary: `${summaryPrefix} ${finalAmountY} SOL with ${activeStrategy}`,
+      reason: `Chosen range ${minBinId}â†’${maxBinId} around active bin ${activeBin.binId}`,
+      risks: [
+        normalizedVolatility != null ? `volatility ${normalizedVolatility}` : null,
+        fee_tvl_ratio != null ? `fee/TVL ${fee_tvl_ratio}%` : null,
+      ].filter(Boolean),
+      metrics: {
+        amount_sol: finalAmountY,
+        strategy: activeStrategy,
+        active_bin: activeBin.binId,
+        min_bin: minBinId,
+        max_bin: maxBinId,
+        downside_pct: downside_pct ?? downsideCoveragePct,
+        upside_pct: upside_pct ?? upsideCoveragePct,
+        layers: deployLayerSummary,
+      },
+    });
+  };
+
+  if (activeStrategy === "mixed" && shouldUseLpAgentRelayForDeploy()) {
+    log("deploy", "Mixed strategy is not supported by the relay path â€” using direct SDK transactions instead.");
+  }
+
+  if (activeStrategy !== "mixed" && shouldUseLpAgentRelayForDeploy()) {
     try {
       const wallet = getWallet();
       log(
@@ -800,22 +940,7 @@ export async function deployPosition({
         const signalSnapshot = config.darwin?.enabled
           ? getAndClearStagedSignals(pool_address, baseMint)
           : null;
-        trackPosition({
-          position: positionAddress,
-          pool: pool_address,
-          pool_name,
-          strategy: activeStrategy,
-          bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
-          bin_step,
-          volatility: normalizedVolatility,
-          fee_tvl_ratio,
-          organic_score,
-          amount_sol: finalAmountY,
-          amount_x: finalAmountX,
-          active_bin: activeBin.binId,
-          initial_value_usd,
-          signal_snapshot: signalSnapshot,
-        });
+        await trackDeploy({ positionAddress, signalSnapshot });
       }
 
       appendDecision({
@@ -862,6 +987,7 @@ export async function deployPosition({
         wide_range: isWideRange,
         amount_x: finalAmountX,
         amount_y: finalAmountY,
+        layers: deployLayerSummary,
         txs: normalizeExecutionSignatures(submit),
       };
     } catch (error) {
@@ -904,32 +1030,59 @@ export async function deployPosition({
       }
 
       // Phase 2: Add liquidity (may be multiple txs)
-      const addTxs = await pool.addLiquidityByStrategyChunkable({
-        positionPubKey: newPosition.publicKey,
-        user: wallet.publicKey,
-        totalXAmount: totalXLamports,
-        totalYAmount: totalYLamports,
-        strategy: { minBinId, maxBinId, strategyType },
-        slippage: 10, // 10%
-      });
-      const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
-      for (let i = 0; i < addTxArray.length; i++) {
-        const txHash = await sendAndConfirmTransaction(getConnection(), addTxArray[i], [wallet]);
-        txHashes.push(txHash);
-        log("deploy", `Add liquidity tx ${i + 1}/${addTxArray.length}: ${txHash}`);
+      for (const layer of deployLayers) {
+        const addTxs = await pool.addLiquidityByStrategyChunkable({
+          positionPubKey: newPosition.publicKey,
+          user: wallet.publicKey,
+          totalXAmount: totalXLamports,
+          totalYAmount: layer.amountY,
+          strategy: { minBinId, maxBinId, strategyType: layer.strategyType },
+          slippage: 10, // 10%
+        });
+        const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
+        for (let i = 0; i < addTxArray.length; i++) {
+          const txHash = await sendAndConfirmTransaction(getConnection(), addTxArray[i], [wallet]);
+          txHashes.push(txHash);
+          log("deploy", `Add ${layer.strategy} liquidity tx ${i + 1}/${addTxArray.length}: ${txHash}`);
+        }
       }
     } else {
       // ── Standard Path (≤69 bins) ─────────────────────────────────
-      const tx = await pool.initializePositionAndAddLiquidityByStrategy({
-        positionPubKey: newPosition.publicKey,
-        user: wallet.publicKey,
-        totalXAmount: totalXLamports,
-        totalYAmount: totalYLamports,
-        strategy: { maxBinId, minBinId, strategyType },
-        slippage: 1000, // 10% in bps
-      });
-      const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet, newPosition]);
-      txHashes.push(txHash);
+      if (activeStrategy === "mixed") {
+        const createTx = await pool.createEmptyPosition({
+          positionPubKey: newPosition.publicKey,
+          minBinId,
+          maxBinId,
+          user: wallet.publicKey,
+        });
+        const createTxHash = await sendAndConfirmTransaction(getConnection(), createTx, [wallet, newPosition]);
+        txHashes.push(createTxHash);
+
+        for (const layer of deployLayers) {
+          const addTx = await pool.addLiquidityByStrategy({
+            positionPubKey: newPosition.publicKey,
+            user: wallet.publicKey,
+            totalXAmount: totalXLamports,
+            totalYAmount: layer.amountY,
+            strategy: { maxBinId, minBinId, strategyType: layer.strategyType },
+            slippage: 1000, // 10% in bps
+          });
+          const addTxHash = await sendAndConfirmTransaction(getConnection(), addTx, [wallet]);
+          txHashes.push(addTxHash);
+          log("deploy", `Add ${layer.strategy} liquidity tx: ${addTxHash}`);
+        }
+      } else {
+        const tx = await pool.initializePositionAndAddLiquidityByStrategy({
+          positionPubKey: newPosition.publicKey,
+          user: wallet.publicKey,
+          totalXAmount: totalXLamports,
+          totalYAmount: totalYLamports,
+          strategy: { maxBinId, minBinId, strategyType },
+          slippage: 1000, // 10% in bps
+        });
+        const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet, newPosition]);
+        txHashes.push(txHash);
+      }
     }
 
     log("deploy", `SUCCESS — ${txHashes.length} tx(s): ${txHashes[0]}`);
@@ -938,22 +1091,7 @@ export async function deployPosition({
     const signalSnapshot = config.darwin?.enabled
       ? getAndClearStagedSignals(pool_address, baseMint)
       : null;
-    trackPosition({
-      position: newPosition.publicKey.toString(),
-      pool: pool_address,
-      pool_name,
-      strategy: activeStrategy,
-      bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
-      bin_step,
-      volatility: normalizedVolatility,
-      fee_tvl_ratio,
-      organic_score,
-      amount_sol: finalAmountY,
-      amount_x: finalAmountX,
-      active_bin: activeBin.binId,
-      initial_value_usd,
-      signal_snapshot: signalSnapshot,
-    });
+    await trackDeploy({ positionAddress: newPosition.publicKey.toString(), signalSnapshot });
 
     appendDecision({
       type: "deploy",
@@ -997,6 +1135,7 @@ export async function deployPosition({
       wide_range: isWideRange,
       amount_x: finalAmountX,
       amount_y: finalAmountY,
+      layers: deployLayerSummary,
       txs: txHashes,
     };
   } catch (error) {
@@ -1727,7 +1866,27 @@ export async function closePosition({ position_address, reason }) {
           };
         }
 
-        recordClose(position_address, reason || "agent decision");
+        const stateCloseCriteriaSnapshot = await captureEnrichedScreeningCriteriaSnapshot({
+          phase: "close",
+          closeReason: reason || "agent decision",
+          poolAddress,
+          baseMint: livePosition?.base_mint || pool.lbPair.tokenXMint.toString(),
+          fallbackPoolMetrics: {
+            bin_step: tracked?.bin_step || null,
+            volatility: tracked?.volatility ?? null,
+            fee_tvl_ratio: tracked?.fee_tvl_ratio || null,
+            organic_score: tracked?.organic_score || null,
+          },
+        });
+        appendScreeningCriteriaEvent({
+          event: "close",
+          position: position_address,
+          pool: poolAddress,
+          pool_name: tracked?.pool_name || poolMeta.name || poolAddress.slice(0, 8),
+          base_mint: livePosition?.base_mint || pool.lbPair.tokenXMint.toString(),
+          snapshot: stateCloseCriteriaSnapshot,
+        });
+        recordClose(position_address, reason || "agent decision", stateCloseCriteriaSnapshot);
 
         if (tracked) {
           const deployedAt = new Date(tracked.deployed_at).getTime();
@@ -1773,6 +1932,19 @@ export async function closePosition({ position_address, reason }) {
             tracked,
           });
 
+          const closeCriteriaSnapshot = await captureEnrichedScreeningCriteriaSnapshot({
+            phase: "close",
+            closeReason: reason || "agent decision",
+            poolAddress,
+            baseMint: closeBaseMint,
+            fallbackPoolMetrics: {
+              bin_step: tracked.bin_step || null,
+              volatility: tracked.volatility ?? null,
+              fee_tvl_ratio: tracked.fee_tvl_ratio || null,
+              organic_score: tracked.organic_score || null,
+            },
+          });
+
           await recordPerformance({
             position: position_address,
             pool: poolAddress,
@@ -1792,6 +1964,7 @@ export async function closePosition({ position_address, reason }) {
             minutes_held: minutesHeld,
             close_reason: reason || "agent decision",
             signal_snapshot: signalSnapshot,
+            screening_criteria_snapshot: closeCriteriaSnapshot,
           });
 
           appendDecision({
@@ -1972,7 +2145,27 @@ export async function closePosition({ position_address, reason }) {
       };
     }
 
-    recordClose(position_address, reason || "agent decision");
+    const stateCloseCriteriaSnapshot = await captureEnrichedScreeningCriteriaSnapshot({
+      phase: "close",
+      closeReason: reason || "agent decision",
+      poolAddress,
+      baseMint: pool.lbPair.tokenXMint.toString(),
+      fallbackPoolMetrics: {
+        bin_step: tracked?.bin_step || null,
+        volatility: tracked?.volatility ?? null,
+        fee_tvl_ratio: tracked?.fee_tvl_ratio || null,
+        organic_score: tracked?.organic_score || null,
+      },
+    });
+    appendScreeningCriteriaEvent({
+      event: "close",
+      position: position_address,
+      pool: poolAddress,
+      pool_name: tracked?.pool_name || poolMeta.name || poolAddress.slice(0, 8),
+      base_mint: pool.lbPair.tokenXMint.toString(),
+      snapshot: stateCloseCriteriaSnapshot,
+    });
+    recordClose(position_address, reason || "agent decision", stateCloseCriteriaSnapshot);
 
     // Auto-swap base token back to SOL (inline, not via executor)
     const swapResult = await autoSwapAfterClose(pool.lbPair.tokenXMint.toString());
@@ -2070,6 +2263,19 @@ export async function closePosition({ position_address, reason }) {
         tracked,
       });
 
+      const closeCriteriaSnapshot = await captureEnrichedScreeningCriteriaSnapshot({
+        phase: "close",
+        closeReason: reason || "agent decision",
+        poolAddress,
+        baseMint: closeBaseMint,
+        fallbackPoolMetrics: {
+          bin_step: tracked.bin_step || null,
+          volatility: tracked.volatility ?? null,
+          fee_tvl_ratio: tracked.fee_tvl_ratio || null,
+          organic_score: tracked.organic_score || null,
+        },
+      });
+
       await recordPerformance({
         position: position_address,
         pool: poolAddress,
@@ -2089,6 +2295,7 @@ export async function closePosition({ position_address, reason }) {
         minutes_held: minutesHeld,
         close_reason: reason || "agent decision",
         signal_snapshot: signalSnapshot,
+        screening_criteria_snapshot: closeCriteriaSnapshot,
       });
 
       appendDecision({
