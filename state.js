@@ -10,8 +10,9 @@
 
 import fs from "fs";
 import { log } from "./logger.js";
+import { repoPath } from "./repo-root.js";
 
-const STATE_FILE = "./state.json";
+const STATE_FILE = repoPath("state.json");
 
 const MAX_RECENT_EVENTS = 20;
 const MAX_INSTRUCTION_LENGTH = 280;
@@ -70,6 +71,10 @@ export function trackPosition({
   initial_value_usd,
   signal_snapshot = null,
   screening_criteria_at_deploy = null,
+  entry_mcap = null,
+  entry_tvl = null,
+  entry_volume = null,
+  entry_holders = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -88,6 +93,10 @@ export function trackPosition({
     initial_fee_tvl_24h: fee_tvl_ratio,
     organic_score,
     initial_value_usd,
+    entry_mcap,
+    entry_tvl,
+    entry_volume,
+    entry_holders,
     signal_snapshot: signal_snapshot || null,
     screening_criteria_at_deploy: screening_criteria_at_deploy || null,
     screening_criteria_at_close: null,
@@ -242,7 +251,7 @@ export function queuePeakConfirmation(position_address, candidatePnlPct, options
     pos.pending_peak_pnl_pct = null;
     pos.pending_peak_started_at = null;
     save(state);
-    log("state", `Position ${position_address} peak PnL accepted at ${candidatePnlPct.toFixed(2)}% from relay poll`);
+    log("state", `Position ${position_address} peak PnL accepted at ${candidatePnlPct.toFixed(2)}% from rpc poll`);
     return true;
   }
 
