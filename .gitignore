@@ -34,6 +34,8 @@ logs/
 # Dev context
 context.md
 docs/
+dev-blocklist.json
+screening-criteria-history.json
 
 # Test files
 test-*.js
