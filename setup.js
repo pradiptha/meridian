@@ -341,6 +341,7 @@ const FIELD_SECTIONS = [
       { key: "takeProfitPct", label: "Take profit %", type: "number", min: 0 },
       { key: "minFeePerTvl24h", label: "Min fee per TVL 24h", type: "number", min: 0 },
       { key: "minAgeBeforeYieldCheck", label: "Min age before yield check (minutes)", type: "number", min: 0 },
+      { key: "minPnlForYieldCheck", label: "Min PnL for yield check (%)", type: "number" },
       { key: "trailingTakeProfit", label: "Trailing take profit? (true/false)", type: "boolean" },
       { key: "trailingTriggerPct", label: "Trailing trigger %", type: "number" },
       { key: "trailingDropPct", label: "Trailing drop %", type: "number", min: 0 },

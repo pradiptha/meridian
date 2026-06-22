@@ -350,6 +350,7 @@ const toolMap = {
       gasReserve: ["management", "gasReserve"],
       positionSizePct: ["management", "positionSizePct"],
       minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
+      minPnlForYieldCheck: ["management", "minPnlForYieldCheck"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],
