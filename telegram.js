@@ -509,6 +509,16 @@ export async function notifyOutOfRange({ pair, minutesOOR }) {
   );
 }
 
+export async function notifyZombieClose({ position, pool, reason }) {
+  if (hasActiveLiveMessage()) return;
+  await sendHTML(
+    `🧟 <b>Zombie Closed</b>\n` +
+    `Position: <code>${position?.slice(0, 8)}...</code>\n` +
+    `Pool: <code>${pool?.slice(0, 8)}...</code>\n` +
+    `Reason: ${reason || "auto-cleanup"}`
+  );
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }

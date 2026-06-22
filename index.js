@@ -8,7 +8,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
-import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
+import { getMyPositions, closePosition, getActiveBin, findZombiePositions } from "./tools/dlmm.js";
 import { getWalletBalances, swapToken } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { formatGmgnCandidateForPrompt } from "./tools/gmgn.js";
@@ -27,6 +27,7 @@ import {
   notifyOutOfRange,
   isEnabled as telegramEnabled,
   createLiveMessage,
+  notifyZombieClose,
 } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
@@ -924,6 +925,24 @@ Summarize the current portfolio health, total fees earned, and performance of al
           }
           break;
         }
+      }
+
+      // Layer A: sweep untracked empty positions from previous failed deploys.
+      // Catches anything Layer B missed (process restart, deploy via relay, etc.).
+      try {
+        const zombies = await findZombiePositions();
+        for (const z of zombies) {
+          log("zombie_sweep", `Closing untracked empty position: ${z.position.slice(0, 8)} (pool ${z.pool.slice(0, 8)})`);
+          try {
+            await closePosition({ position_address: z.position, reason: "zombie: empty untracked position (auto-cleanup)" });
+            notifyZombieClose({ position: z.position, pool: z.pool, reason: "auto-cleanup: 0 liquidity, not tracked" })
+              .catch((e) => log("telegram_warn", `zombie notify failed: ${e.message}`));
+          } catch (closeErr) {
+            log("zombie_sweep_warn", `Failed to close ${z.position.slice(0, 8)}: ${closeErr.message}`);
+          }
+        }
+      } catch (sweepErr) {
+        log("zombie_sweep_warn", `Zombie sweep error: ${sweepErr.message}`);
       }
     } finally {
       _pnlPollBusy = false;

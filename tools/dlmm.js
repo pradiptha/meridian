@@ -30,6 +30,7 @@ import { appendDecision } from "../decision-log.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
 import { appendScreeningCriteriaEvent, captureEnrichedScreeningCriteriaSnapshot } from "../screening-criteria.js";
 import { computePositions, fetchDlmmPnlForPool } from "./pnl.js";
+import { notifyZombieClose } from "../telegram.js";
 
 // ─── Lazy SDK loader ───────────────────────────────────────────
 // @meteora-ag/dlmm → @coral-xyz/anchor uses CJS directory imports
@@ -561,10 +562,41 @@ export async function getActiveBin({ pool_address }) {
   };
 }
 
+// ─── Zombie Position Detection ──────────────────────────────────
+// A "zombie" is an on-chain DLMM position that was created (Phase 1 of the
+// wide-range path) but never received liquidity (Phase 2 failed). It has 0
+// tokens, 0 fees, and is not in state.json. It wastes rent and spams the
+// PnL poller with `depositsMissing=true` warnings.
+const _zombieCloseInFlight = new Set();
+
+export async function findZombiePositions() {
+  if (_zombieCloseInFlight.size > 0) return [];
+  const wallet = getWallet();
+  const { DLMM } = await getDLMM();
+  const map = await DLMM.getAllLbPairPositionsByUser(getConnection(), wallet.publicKey);
+  const zombies = [];
+  for (const [lbPair, info] of Object.entries(map)) {
+    for (const p of info?.lbPairPositionsData || []) {
+      const addr = p.publicKey.toString();
+      if (_zombieCloseInFlight.has(addr)) continue;
+      if (getTrackedPosition(addr)) continue;
+      const d = p.positionData || {};
+      const xRaw = new BN(d.totalXAmount?.toString?.() ?? d.totalXAmount ?? "0");
+      const yRaw = new BN(d.totalYAmount?.toString?.() ?? d.totalYAmount ?? "0");
+      const feeX = new BN(d.feeX?.toString?.() ?? d.feeX ?? "0");
+      const feeY = new BN(d.feeY?.toString?.() ?? d.feeY ?? "0");
+      if (xRaw.isZero() && yRaw.isZero() && feeX.isZero() && feeY.isZero()) {
+        zombies.push({ position: addr, pool: lbPair });
+      }
+    }
+  }
+  return zombies;
+}
+
 // ─── Deploy Position ───────────────────────────────────────────
 const MIXED_DEPLOY_LAYERS = Object.freeze([
-  { strategy: "spot", pct: 30 },
-  { strategy: "bid_ask", pct: 70 },
+  { strategy: "spot", pct: 70 },
+  { strategy: "bid_ask", pct: 30 },
 ]);
 
 function getDeployLayers(activeStrategy, strategyMap) {
@@ -1150,7 +1182,38 @@ export async function deployPosition({
     };
   } catch (error) {
     log("deploy_error", error.message);
-    return { success: false, error: error.message };
+
+    if (wallet && newPosition && pool) {
+      try {
+        const positionPubKey = newPosition.publicKey;
+        const posData = await pool.getPosition(positionPubKey);
+        const bins = posData?.positionData?.positionBinData || [];
+        const hasLiquidity = bins.some(
+          (b) => new BN(b.positionLiquidity || "0").gt(new BN(0))
+        );
+        if (!hasLiquidity) {
+          const closeTx = await pool.closePosition({
+            owner: wallet.publicKey,
+            position: { publicKey: positionPubKey },
+          });
+          const closeHash = await sendAndConfirmTransaction(
+            getConnection(),
+            closeTx,
+            [wallet]
+          );
+          log("deploy_recover", `Zombie ${positionPubKey.toString().slice(0, 8)} closed after failed deploy: ${closeHash}`);
+          notifyZombieClose({
+            position: positionPubKey.toString(),
+            pool: pool_address,
+            reason: `deploy failed: ${String(error.message).slice(0, 80)}`,
+          }).catch((e) => log("telegram_warn", `zombie notify failed: ${e.message}`));
+        }
+      } catch (recoverErr) {
+        log("deploy_recover_warn", `Failed to auto-close zombie: ${recoverErr.message}`);
+      }
+    }
+
+    return { success: false, error: error.message, recovered_zombie: true };
   }
 }
 
