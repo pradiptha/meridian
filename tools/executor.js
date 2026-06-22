@@ -345,6 +345,7 @@ const toolMap = {
       trailingDropPct: ["management", "trailingDropPct"],
       pnlSanityMaxDiffPct: ["management", "pnlSanityMaxDiffPct"],
       solMode: ["management", "solMode"],
+      bypassPnlPollCooldown: ["management", "bypassPnlPollCooldown"],
       minSolToOpen: ["management", "minSolToOpen"],
       deployAmountSol: ["management", "deployAmountSol"],
       gasReserve: ["management", "gasReserve"],

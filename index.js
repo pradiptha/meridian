@@ -901,27 +901,37 @@ Summarize the current portfolio health, total fees earned, and performance of al
             }
             continue;
           }
-          const cooldownMs = config.schedule.managementIntervalMin * 60 * 1000;
-          const sinceLastTrigger = Date.now() - _pollTriggeredAt;
-          if (sinceLastTrigger >= cooldownMs) {
-            _pollTriggeredAt = Date.now();
-            log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — triggering management`);
+          if (config.management.bypassPnlPollCooldown) {
+            log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — triggering management (bypass cooldown)`);
             runManagementCycle({ silent: true }).catch((e) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
           } else {
-            log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
+            const cooldownMs = config.schedule.managementIntervalMin * 60 * 1000;
+            const sinceLastTrigger = Date.now() - _pollTriggeredAt;
+            if (sinceLastTrigger >= cooldownMs) {
+              _pollTriggeredAt = Date.now();
+              log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — triggering management`);
+              runManagementCycle({ silent: true }).catch((e) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
+            } else {
+              log("state", `[PnL poll] Exit alert: ${p.pair} — ${exit.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
+            }
           }
           break;
         }
         const closeRule = getDeterministicCloseRule(p, config.management);
         if (closeRule) {
-          const cooldownMs = config.schedule.managementIntervalMin * 60 * 1000;
-          const sinceLastTrigger = Date.now() - _pollTriggeredAt;
-          if (sinceLastTrigger >= cooldownMs) {
-            _pollTriggeredAt = Date.now();
-            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — triggering management`);
+          if (config.management.bypassPnlPollCooldown) {
+            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — triggering management (bypass cooldown)`);
             runManagementCycle({ silent: true }).catch((e) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
           } else {
-            log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
+            const cooldownMs = config.schedule.managementIntervalMin * 60 * 1000;
+            const sinceLastTrigger = Date.now() - _pollTriggeredAt;
+            if (sinceLastTrigger >= cooldownMs) {
+              _pollTriggeredAt = Date.now();
+              log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — triggering management`);
+              runManagementCycle({ silent: true }).catch((e) => log("cron_error", `Poll-triggered management failed: ${e.message}`));
+            } else {
+              log("state", `[PnL poll] Deterministic close rule: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — cooldown (${Math.round((cooldownMs - sinceLastTrigger) / 1000)}s left)`);
+            }
           }
           break;
         }
@@ -1185,6 +1195,7 @@ function formatConfigSnapshot() {
     `Trailing: ${config.management.trailingTakeProfit ? "on" : "off"} | trigger ${config.management.trailingTriggerPct}% | drop ${config.management.trailingDropPct}%`,
     `OOR: ${config.management.outOfRangeWaitMinutes}m | cooldown ${config.management.oorCooldownTriggerCount}x / ${config.management.oorCooldownHours}h`,
     `Repeat deploy cooldown: ${config.management.repeatDeployCooldownEnabled ? "on" : "off"} | ${config.management.repeatDeployCooldownTriggerCount}x / ${config.management.repeatDeployCooldownHours}h | min fee earned ${config.management.repeatDeployCooldownMinFeeEarnedPct}% | ${config.management.repeatDeployCooldownScope}`,
+    `PnL poll cooldown: ${config.management.bypassPnlPollCooldown ? "bypassed" : "on"}`,
     `Yield floor: ${config.management.minFeePerTvl24h}% | min age ${config.management.minAgeBeforeYieldCheck}m | min PnL ${config.management.minPnlForYieldCheck}%`,
     `Screening: ${config.screening.category} / ${config.screening.timeframe} | TVL ${config.screening.minTvl}-${config.screening.maxTvl}`,
     `GMGN interval: ${config.gmgn.interval} | OrderBy: ${config.gmgn.orderBy} | Dir: ${config.gmgn.direction}`,
@@ -1249,6 +1260,7 @@ function settingValue(key) {
     repeatDeployCooldownTriggerCount: config.management.repeatDeployCooldownTriggerCount,
     repeatDeployCooldownHours: config.management.repeatDeployCooldownHours,
     repeatDeployCooldownMinFeeEarnedPct: config.management.repeatDeployCooldownMinFeeEarnedPct,
+    bypassPnlPollCooldown: config.management.bypassPnlPollCooldown,
     managementIntervalMin: config.schedule.managementIntervalMin,
     screeningIntervalMin: config.schedule.screeningIntervalMin,
     indicatorEntryPreset: config.indicators.entryPreset,
@@ -1336,6 +1348,7 @@ function renderSettingsMenu(page = "main") {
       inputButton("trailingTriggerPct", "Trail trigger", { digits: 1 }),
       inputButton("trailingDropPct", "Trail drop", { digits: 1 }),
       [toggleButton("repeatDeployCooldownEnabled", "Repeat cooldown")],
+      [toggleButton("bypassPnlPollCooldown", "Bypass poll cd")],
       inputButton("repeatDeployCooldownTriggerCount", "Repeat count"),
       inputButton("repeatDeployCooldownHours", "Repeat hrs"),
       inputButton("repeatDeployCooldownMinFeeEarnedPct", "Min fee earned %", { digits: 1 }),

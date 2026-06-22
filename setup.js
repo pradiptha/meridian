@@ -347,6 +347,7 @@ const FIELD_SECTIONS = [
       { key: "trailingDropPct", label: "Trailing drop %", type: "number", min: 0 },
       { key: "pnlSanityMaxDiffPct", label: "Max open-PnL sanity diff %", type: "number", min: 0 },
       { key: "solMode", label: "SOL mode? (true/false)", type: "boolean" },
+      { key: "bypassPnlPollCooldown", label: "Bypass PnL poll cooldown? (true/false)", type: "boolean" },
     ],
   },
   {
