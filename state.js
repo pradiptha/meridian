@@ -404,7 +404,7 @@ export function getStateSummary() {
  * Returns { action, reason } or null if no exit needed.
  */
 export function updatePnlAndCheckExits(position_address, positionData, mgmtConfig) {
-  const { pnl_pct: currentPnlPct, pnl_pct_suspicious, in_range, fee_per_tvl_24h } = positionData;
+  const { pnl_pct: currentPnlPct, pnl_pct_suspicious, in_range, fee_per_tvl_24h, age_minutes } = positionData;
   const state = load();
   const pos = state.positions[position_address];
   if (!pos || pos.closed) return null;
@@ -466,6 +466,21 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     }
   }
 
+  // ── Stalled position: peak never reached threshold after age gate ──
+  if (
+    !pnl_pct_suspicious &&
+    mgmtConfig.stalledExitEnabled &&
+    pos.peak_pnl_pct != null &&
+    pos.peak_pnl_pct < mgmtConfig.stalledPeakPct &&
+    (age_minutes ?? 0) >= mgmtConfig.stalledAfterMin &&
+    (currentPnlPct ?? -1) < mgmtConfig.stalledPeakPct
+  ) {
+    return {
+      action: "STALLED",
+      reason: `Stalled: peak ${pos.peak_pnl_pct.toFixed(2)}% < ${mgmtConfig.stalledPeakPct}% after ${age_minutes ?? "?"}m (current ${currentPnlPct?.toFixed(2) ?? "?"}%)`,
+    };
+  }
+
   // ── Out of range too long ──────────────────────────────────────
   if (pos.out_of_range_since) {
     const minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
@@ -478,7 +493,6 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   }
 
   // ── Low yield (only after position has had time to accumulate fees) ───
-  const { age_minutes } = positionData;
   const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
   const minPnlForYieldCheck = mgmtConfig.minPnlForYieldCheck ?? -0.2;
   if (

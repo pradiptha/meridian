@@ -1076,6 +1076,15 @@ function getDeterministicCloseRule(position, managementConfig) {
   ) {
     return { action: "CLOSE", rule: 5, reason: "low yield" };
   }
+  if (
+    managementConfig.stalledExitEnabled &&
+    tracked?.peak_pnl_pct != null &&
+    tracked.peak_pnl_pct < managementConfig.stalledPeakPct &&
+    (position.age_minutes ?? 0) >= managementConfig.stalledAfterMin &&
+    (position.pnl_pct ?? -1) < managementConfig.stalledPeakPct
+  ) {
+    return { action: "CLOSE", rule: 6, reason: "stalled" };
+  }
   return null;
 }
 
@@ -1193,6 +1202,7 @@ function formatConfigSnapshot() {
     `Deploy: ${config.management.deployAmountSol} SOL | gasReserve: ${config.management.gasReserve} | maxPositions: ${config.risk.maxPositions}`,
     `Stop loss: ${config.management.stopLossPct}% | take profit: ${config.management.takeProfitPct}%`,
     `Trailing: ${config.management.trailingTakeProfit ? "on" : "off"} | trigger ${config.management.trailingTriggerPct}% | drop ${config.management.trailingDropPct}%`,
+    `Stalled exit: ${config.management.stalledExitEnabled ? "on" : "off"} | peak ${config.management.stalledPeakPct}% | after ${config.management.stalledAfterMin}m`,
     `OOR: ${config.management.outOfRangeWaitMinutes}m | cooldown ${config.management.oorCooldownTriggerCount}x / ${config.management.oorCooldownHours}h`,
     `Repeat deploy cooldown: ${config.management.repeatDeployCooldownEnabled ? "on" : "off"} | ${config.management.repeatDeployCooldownTriggerCount}x / ${config.management.repeatDeployCooldownHours}h | min fee earned ${config.management.repeatDeployCooldownMinFeeEarnedPct}% | ${config.management.repeatDeployCooldownScope}`,
     `PnL poll cooldown: ${config.management.bypassPnlPollCooldown ? "bypassed" : "on"}`,
@@ -1256,6 +1266,9 @@ function settingValue(key) {
     stopLossPct: config.management.stopLossPct,
     trailingTriggerPct: config.management.trailingTriggerPct,
     trailingDropPct: config.management.trailingDropPct,
+    stalledExitEnabled: config.management.stalledExitEnabled,
+    stalledPeakPct: config.management.stalledPeakPct,
+    stalledAfterMin: config.management.stalledAfterMin,
     repeatDeployCooldownEnabled: config.management.repeatDeployCooldownEnabled,
     repeatDeployCooldownTriggerCount: config.management.repeatDeployCooldownTriggerCount,
     repeatDeployCooldownHours: config.management.repeatDeployCooldownHours,
@@ -1347,6 +1360,9 @@ function renderSettingsMenu(page = "main") {
       [toggleButton("trailingTakeProfit", "Trailing TP")],
       inputButton("trailingTriggerPct", "Trail trigger", { digits: 1 }),
       inputButton("trailingDropPct", "Trail drop", { digits: 1 }),
+      [toggleButton("stalledExitEnabled", "Stalled exit")],
+      inputButton("stalledPeakPct", "Stall peak %", { digits: 2 }),
+      inputButton("stalledAfterMin", "Stall after min"),
       [toggleButton("repeatDeployCooldownEnabled", "Repeat cooldown")],
       [toggleButton("bypassPnlPollCooldown", "Bypass poll cd")],
       inputButton("repeatDeployCooldownTriggerCount", "Repeat count"),

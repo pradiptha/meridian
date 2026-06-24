@@ -135,7 +135,8 @@ function getRealCloseNote(pos) {
  *   LOSS_OOR        — "Out of range", "OOR", or "pumped far above range" — incl. Trailing-TP-tagged OOR exits
  *   LOSS_RULE       — Screener rule forced close (e.g. "Rule 3: pumped far above range")
  *   LOSS_YIELD      — Low-yield exit with peak PnL < 1.5% and no TP
- *   LOSS_SL         — Stop loss triggered
+ *   LOSS_SL         — Stop loss triggered (incl. "Trailing TP: Stop loss" notes)
+ *   LOSS_STALLED    — Stalled-position exit (peak never reached threshold after age gate)
  *   NEUTRAL_AGENT   — Agent discretionary decision
  *   NEUTRAL_REBAL   — Rebalance close
  *   NEUTRAL_USER    — User override
@@ -146,6 +147,8 @@ function classify(pos) {
   if (!note) return { bucket: "OTHER", realNote: null };
   const n = note.toLowerCase();
 
+  // Stop loss first — including "Trailing TP: Stop loss" notes (which would otherwise be misread as wins)
+  if (n.includes("stop loss")) return { bucket: "LOSS_SL", realNote: note };
   // Trailing TP without OOR trigger (clean or low-yield co-trigger)
   if (n.includes("trailing tp") && !n.includes("out of range") && !n.includes("oor") && !n.includes("pumped")) {
     if (n.includes("low yield")) return { bucket: "WIN_LOWYIELD", realNote: note };
@@ -158,7 +161,7 @@ function classify(pos) {
     if (n.includes("rule") && n.includes("close")) return { bucket: "LOSS_RULE", realNote: note };
     return { bucket: "LOSS_OOR", realNote: note };
   }
-  if (n.includes("stop loss")) return { bucket: "LOSS_SL", realNote: note };
+  if (n.includes("stalled")) return { bucket: "LOSS_STALLED", realNote: note };
   if (n.includes("low yield")) return { bucket: "LOSS_YIELD", realNote: note };
   if (n.includes("rule") && n.includes("close")) return { bucket: "LOSS_RULE", realNote: note };
   if (n.includes("agent decision")) return { bucket: "NEUTRAL_AGENT", realNote: note };
@@ -171,7 +174,7 @@ function classify(pos) {
 // NEUTRAL_USER and NEUTRAL_REBAL are excluded — those are operator or mechanical exits, not TP/SL quality.
 const STRATEGY_WIN = new Set(["WIN_CLEAN", "WIN_MANUAL", "NEUTRAL_AGENT"]);
 const STRATEGY_LOSS = new Set(["LOSS_SL"]);
-const FORCED = new Set(["LOSS_OOR", "LOSS_RULE", "LOSS_YIELD"]);
+const FORCED = new Set(["LOSS_OOR", "LOSS_RULE", "LOSS_YIELD", "LOSS_STALLED"]);
 const LOWYIELD = new Set(["WIN_LOWYIELD", "LOSS_YIELD"]);
 
 /**
@@ -461,7 +464,8 @@ function renderReport({ rangeLabel, generatedAt, all, closed, open, totalFees, c
   L.push("| `LOSS_OOR` | \"Out of range\" / \"OOR\" / \"pumped far above range\" (incl. Trailing-TP-tagged OOR exits) |");
   L.push("| `LOSS_RULE` | Screener rule forced close (e.g. \"Rule 3: pumped far above range\") |");
   L.push("| `LOSS_YIELD` | Low-yield exit, peak < 1.5% |");
-  L.push("| `LOSS_SL` | Stop loss triggered |");
+  L.push("| `LOSS_SL` | Stop loss triggered (incl. \"Trailing TP: Stop loss\" notes) |");
+  L.push("| `LOSS_STALLED` | Stalled-position exit (peak never reached threshold after age gate) |");
   L.push("| `NEUTRAL_*` | Agent / user / rebalance — excluded from strategy WR |");
   L.push("");
 
@@ -469,7 +473,7 @@ function renderReport({ rangeLabel, generatedAt, all, closed, open, totalFees, c
   L.push("");
   const bucketOrder = [
     "WIN_CLEAN", "WIN_LOWYIELD", "WIN_MANUAL",
-    "LOSS_OOR", "LOSS_RULE", "LOSS_YIELD", "LOSS_SL",
+    "LOSS_OOR", "LOSS_RULE", "LOSS_YIELD", "LOSS_SL", "LOSS_STALLED",
     "NEUTRAL_AGENT", "NEUTRAL_REBAL", "NEUTRAL_USER", "OTHER",
   ];
   const countsRows = bucketOrder.map((b) => {

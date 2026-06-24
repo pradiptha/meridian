@@ -186,7 +186,7 @@ export async function registerHiveMindAgent({ reason = "heartbeat" } = {}) {
   }
 }
 
-export async function pullHiveMindLessons(limit = 12) {
+export async function pullHiveMindLessons(limit = 100) {
   if (!isHiveMindEnabled()) return null;
   try {
     const payload = await requestJson("/api/hivemind/lessons/pull", {
